@@ -645,7 +645,11 @@ void setupWebServer() {
     P.setZoneEffect(0, flipDisplay, PA_FLIP_UD);
     P.setZoneEffect(0, flipDisplay, PA_FLIP_LR);
     Serial.printf("[WEBSERVER] Set flipDisplay to %d\n", flipDisplay);
-    saveConfig();
+    String msg = saveConfig();
+    if (msg.length() > 0) {
+      request->send(500, "application/json", msg);
+      return;
+    }
     request->send(200, "application/json", "{\"ok\":true}");
   });
 
@@ -681,14 +685,35 @@ void setupWebServer() {
         Serial.printf("[WEBSERVER] Converted countupdown target: %s -> %lu\n", DateTimeStr.c_str(), newTargetTimestamp);
       }
       countupdownTargetTimestamp = newTargetTimestamp;
-      saveConfig();
+      String msg = saveConfig();
+      if (msg.length() > 0) {
+        request->send(500, "application/json", msg);
+        return;
+      }
+      request->send(200, "application/json", "{\"ok\":true}");
+    } else {
+      request->send(400, "application/json", "{\"error\":\"Invalid datetime\"}");
     }
   });
 
-  server.on("/start_countup", HTTP_GET, [](AsyncWebServerRequest *request) {
+  server.on("/start", HTTP_GET, [](AsyncWebServerRequest *request) {
     DateTime dtNow = rtc.now();
     countupdownTargetTimestamp = dtNow.unixtime();
-    saveConfig();
+    String msg = saveConfig();
+    if (msg.length() > 0) {
+      request->send(500, "application/json", msg);
+      return;
+    }
+    request->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  server.on("/stop", HTTP_GET, [](AsyncWebServerRequest *request) {
+    countupdownTargetTimestamp = 0;
+    String msg = saveConfig();
+    if (msg.length() > 0) {
+      request->send(500, "application/json", msg);
+      return;
+    }
     request->send(200, "application/json", "{\"ok\":true}");
   });
 
@@ -698,6 +723,12 @@ void setupWebServer() {
       return;
     }
     countupdownTargetTimestamp += request->getParam("seconds", true)->value().toInt();
+    String msg = saveConfig();
+    if (msg.length() > 0) {
+      request->send(500, "application/json", msg);
+      return;
+    }
+    request->send(200, "application/json", "{\"ok\":true}");
   });
 
   server.on("/remove_seconds", HTTP_POST, [](AsyncWebServerRequest *request){
@@ -706,6 +737,12 @@ void setupWebServer() {
       return;
     }
     countupdownTargetTimestamp -= request->getParam("seconds", true)->value().toInt();
+    String msg = saveConfig();
+    if (msg.length() > 0) {
+      request->send(500, "application/json", msg);
+      return;
+    }
+    request->send(200, "application/json", "{\"ok\":true}");
   });
 
   server.on("/get_time", HTTP_GET, [](AsyncWebServerRequest *request){
