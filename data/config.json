@@ -1,12 +1,12 @@
 {
-  "ssids": ["","","","","","","","","",""],
-  "passwords": ["","","","","","","","","",""],
+  "mdns": "chronoclock",
+  "apSsid": "",
+  "apPassword": "",
   "timeZone": "",
   "brightness": 1,
   "flipDisplay": true,
   "ntpServer1": "pool.ntp.org",
   "ntpServer2": "time.nist.gov",
-  "mdns": "chronoclock",
   "countupdown": {
     "targetTimestamp": 0
   }

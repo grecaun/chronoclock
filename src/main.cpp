@@ -20,11 +20,17 @@
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_DEVICES   4
 
+const char *DEFAULT_AP_SSID = "chronoclock";
+const char *DEFAULT_AP_PASSWORD = "chrono157";
+
 MD_Parola P = MD_Parola(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, MAX_DEVICES);
 RTC_DS3231 rtc;
 AsyncWebServer server(80);
 
 // Settings
+char mdns[64]          = "";
+char apSsid[32]        = "";
+char apPassword[64]    = "";
 char ssids[10][32]     = {"","","","","","","","","",""};
 char passwords[10][64] = {"","","","","","","","","",""};
 char timeZone[64]      = "";
@@ -32,7 +38,6 @@ int  brightness        = 10;
 bool flipDisplay       = false;
 char ntpServer1[128]   = "pool.ntp.org";
 char ntpServer2[128]   = "time.nist.gov";
-char mdns[64]          = "";
 
 // Globals
 bool          isAPMode                   = false;
@@ -58,7 +63,7 @@ int                 ntpRetryCount          = 0;
 
 // --- Safe WiFi credential getters ---
 const char *getSafeSsid(int ix) {
-  return isAPMode ? "" : ssids[ix];
+  return ssids[ix];
 }
 
 const char *getSafePassword(int ix) {
@@ -79,16 +84,20 @@ void loadConfig() {
   if (!LittleFS.exists("/config.json")) {
     Serial.println(F("[CONFIG] config.json not found, creating with defaults..."));
     JsonDocument doc;
+    doc[F("mdns")] = mdns;
+    doc[F("apSsid")] = apSsid;
+    doc[F("apPassword")] = apPassword;
     doc[F("timeZone")] = timeZone;
     doc[F("brightness")] = brightness;
     doc[F("flipDisplay")] = flipDisplay;
-    doc[F("mdns")] = mdns;
+    doc[F("ntpServer1")] = ntpServer1;
+    doc[F("ntpServer2")] = ntpServer2;
 
     JsonArray ssidArray = doc["ssids"].to<JsonArray>();
     JsonArray pwdArray = doc["passwords"].to<JsonArray>();
     for (int i=0;i<10;i++) {
       ssidArray[i] = ssids[i];
-      pwdArray[i] = ssids[i];
+      pwdArray[i] = passwords[i];
     }
 
     // Add countupdown defaults when creating a new config.json
@@ -128,13 +137,14 @@ void loadConfig() {
     strlcpy(ssids[i], ssidArray[i] | "", sizeof(ssids[i]));
     strlcpy(passwords[i], pwdArray[i] | "", sizeof(passwords[i]));
   }
+  strlcpy(mdns, doc["mdns"] | "chronoclock", sizeof(mdns));
+  strlcpy(apSsid, doc["apSsid"] | "", sizeof(apSsid));
+  strlcpy(apPassword, doc["apPassword"] | "", sizeof(apPassword));
   strlcpy(timeZone, doc["timeZone"] | "Etc/UTC", sizeof(timeZone));
-
   brightness = doc["brightness"] | 7;
   flipDisplay = doc["flipDisplay"] | false;
   strlcpy(ntpServer1, doc["ntpServer1"] | "pool.ntp.org", sizeof(ntpServer1));
   strlcpy(ntpServer2, doc["ntpServer2"] | "time.nist.gov", sizeof(ntpServer2));
-  strlcpy(mdns, doc["mdns"] | "chronoclock", sizeof(mdns));
 
   // --- COUNTUPDOWN CONFIG LOADING ---
   if (doc["countupdown"].is<JsonObject>()) {
@@ -162,17 +172,21 @@ String saveConfig() {
     } else {
       Serial.println(F("[SAVE] config.json not found, starting with empty doc for save."));
     }
-
+    
+    doc[F("mdns")] = mdns;
+    doc[F("apSsid")] = apSsid;
+    doc[F("apPassword")] = apPassword;
     doc[F("timeZone")] = timeZone;
     doc[F("brightness")] = brightness;
     doc[F("flipDisplay")] = flipDisplay;
-    doc[F("mdns")] = mdns;
+    doc[F("ntpServer1")] = ntpServer1;
+    doc[F("ntpServer2")] = ntpServer2;
 
     JsonArray ssidArray = doc["ssids"].to<JsonArray>();
     JsonArray pwdArray = doc["passwords"].to<JsonArray>();
     for (int i=0;i<10;i++) {
       ssidArray[i] = ssids[i];
-      pwdArray[i] = ssids[i];
+      pwdArray[i] = passwords[i];
     }
 
     JsonObject countupdownObj = doc["countupdown"].to<JsonObject>();
@@ -239,8 +253,6 @@ String saveConfig() {
 // -----------------------------------------------------------------------------
 // WiFi Setup
 // -----------------------------------------------------------------------------
-const char *DEFAULT_AP_PASSWORD = "chrono157";
-const char *AP_SSID = "chronoclock";
 
 void connectWiFi() {
   Serial.println(F("[WIFI] Connecting to WiFi..."));
@@ -288,7 +300,17 @@ void connectWiFi() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println(F("[WIFI] Unable to connect to a Wifi network. Starting AP mode..."));
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, DEFAULT_AP_PASSWORD);
+    if (strlen(apSsid) > 0) {
+      if (strlen(apPassword) >= 8) {
+        WiFi.softAP(apSsid, apPassword);
+      } else {
+        WiFi.softAP(apSsid, NULL);
+      }
+    } else if (strlen(DEFAULT_AP_PASSWORD) >= 8) {
+      WiFi.softAP(DEFAULT_AP_SSID, DEFAULT_AP_PASSWORD);
+    } else {
+      WiFi.softAP(DEFAULT_AP_SSID, NULL);
+    }
     Serial.print(F("[WIFI] AP IP address: "));
     Serial.println(WiFi.softAPIP());
     dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
@@ -483,6 +505,10 @@ void setupWebServer() {
         countupdownDateStr = v;
       } else if (n == "coundupdownTime") {
         countupdownTimeStr = v;
+      } else if (n == "apSsid") {
+        strlcpy(apSsid, v.c_str(), sizeof(apSsid));
+      } else if (n == "apPassword") {
+        strlcpy(apPassword, v.c_str(), sizeof(apPassword));
       }
     }
 
@@ -519,7 +545,6 @@ void setupWebServer() {
     }
 
     request->onDisconnect([&restartWifi]() {
-      Serial.println(F("[WEBSERVER] Restarting WiFi connection..."));
       if (restartWifi) {
         Serial.println(F("[WEBSERVER] WiFi information changed, restarting WiFi."));
         connectWiFi();

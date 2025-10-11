@@ -251,6 +251,16 @@
   <h2>WiFi Settings</h2>
   <div class="form-row two-col">
     <div class="form-group">
+      <label for="apSsid">AP SSID</label>
+      <input type="text" id="apSsid" name="apSsid" />
+    </div>
+    <div class="form-group">
+      <label for="apPassword">Password</label>
+      <input type="password" id="apPassword" name="apPassword" placeholder="" />
+    </div>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
       <label for="ssid0">SSID 1</label>
       <input type="text" id="ssid0" name="ssid0" />
     </div>
@@ -539,6 +549,7 @@ window.onload = function () {
     .then(response => response.json())
     .then(data => {
       isAPMode = (data.mode === "ap");
+      document.getElementById("apSsid").value = data.apSsid || '';
       document.getElementById('ssid0').value = data.ssids[0] || '';
       document.getElementById('ssid1').value = data.ssids[1] || '';
       document.getElementById('ssid2').value = data.ssids[2] || '';
@@ -549,6 +560,7 @@ window.onload = function () {
       document.getElementById('ssid7').value = data.ssids[7] || '';
       document.getElementById('ssid8').value = data.ssids[8] || '';
       document.getElementById('ssid9').value = data.ssids[9] || '';
+      document.getElementById("apPassword").value = data.apPassword || '';
       document.getElementById('password0').value = data.passwords[0] || '';
       document.getElementById('password1').value = data.passwords[1] || '';
       document.getElementById('password2').value = data.passwords[2] || '';
