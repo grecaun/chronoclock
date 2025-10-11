@@ -13,7 +13,6 @@
 #include <time.h>
 #include <WiFiClientSecure.h>
 #include <ESPmDNS.h>
-
 #include "RTClib.h"
 #include "mfactoryfont.h"   // Custom font
 #include "tz_lookup.h"      // Timezone lookup
@@ -37,13 +36,10 @@ char mdns[64]          = "";
 
 // Globals
 bool          isAPMode                   = false;
-int           displayMode                = 0;  // 0: Clock, 3: Countupdown
-bool          ntpSyncSuccessful          = false;
 unsigned long lastColonBlink             = 0;
 time_t        countupdownTargetTimestamp = 0;  // Unix timestamp
 
 // State management
-WiFiClient client;
 DNSServer dnsServer;
 const byte DNS_PORT = 53;
 
@@ -91,8 +87,8 @@ void loadConfig() {
     JsonArray ssidArray = doc["ssids"].to<JsonArray>();
     JsonArray pwdArray = doc["passwords"].to<JsonArray>();
     for (int i=0;i<10;i++) {
-      ssidArray.add("");
-      pwdArray.add("");
+      ssidArray[i] = ssids[i];
+      pwdArray[i] = ssids[i];
     }
 
     // Add countupdown defaults when creating a new config.json
@@ -105,14 +101,14 @@ void loadConfig() {
       f.close();
       Serial.println(F("[CONFIG] Default config.json created."));
     } else {
-      Serial.println(F("[ERROR] Failed to create default config.json"));
+      Serial.println(F("[CONFIG] Failed to create default config.json"));
     }
   }
 
   Serial.println(F("[CONFIG] Attempting to open config.json for reading."));
   File configFile = LittleFS.open("/config.json", "r");
   if (!configFile) {
-    Serial.println(F("[ERROR] Failed to open config.json for reading. Cannot load config."));
+    Serial.println(F("[CONFIG] Failed to open config.json for reading. Cannot load config."));
     return;
   }
 
@@ -121,7 +117,7 @@ void loadConfig() {
   configFile.close();
 
   if (error) {
-    Serial.print(F("[ERROR] JSON parse failed during load: "));
+    Serial.print(F("[CONFIG] JSON parse failed during load: "));
     Serial.println(error.f_str());
     return;
   }
@@ -151,161 +147,112 @@ void loadConfig() {
   Serial.println(F("[CONFIG] Configuration loaded."));
 }
 
-bool saveCountupdownConfig(time_t targetTimestamp) {
-  JsonDocument doc;
+String saveConfig() {
+    JsonDocument doc;
 
-  File configFile = LittleFS.open("/config.json", "r");
-  if (configFile) {
-    DeserializationError err = deserializeJson(doc, configFile);
-    configFile.close();
-    if (err) {
-      Serial.print(F("[saveCountupdownConfig] Error parsing config.json: "));
-      Serial.println(err.f_str());
-      return false;
+    File configFile = LittleFS.open("/config.json", "r");
+    if (configFile) {
+      Serial.println(F("[SAVE] Existing config.json found, loading for update..."));
+      DeserializationError err = deserializeJson(doc, configFile);
+      configFile.close();
+      if (err) {
+        Serial.print(F("[SAVE] Error parsing existing config.json: "));
+        Serial.println(err.f_str());
+      }
+    } else {
+      Serial.println(F("[SAVE] config.json not found, starting with empty doc for save."));
     }
-  }
 
-  JsonObject countupdownObj = doc["countupdown"].is<JsonObject>() ? doc["countupdown"].as<JsonObject>() : doc["countupdown"].to<JsonObject>();
-  countupdownObj["targetTimestamp"] = targetTimestamp;
+    doc[F("timeZone")] = timeZone;
+    doc[F("brightness")] = brightness;
+    doc[F("flipDisplay")] = flipDisplay;
+    doc[F("mdns")] = mdns;
 
-  if (LittleFS.exists("/config.json")) {
-    LittleFS.rename("/config.json", "/config.bak");
-  }
-
-  File f = LittleFS.open("/config.json", "w");
-  if (!f) {
-    Serial.println(F("[saveCountupdownConfig] ERROR: Cannot write to /config.json"));
-    return false;
-  }
-
-  size_t bytesWritten = serializeJson(doc, f);
-  f.close();
-
-  Serial.printf("[saveCountupdownConfig] Config updated. %u bytes written.\n", bytesWritten);
-  return true;
-}
-
-bool saveBrightnessConfig(int brightness) {
-  JsonDocument doc;
-
-  File configFile = LittleFS.open("/config.json", "r");
-  if (configFile) {
-    DeserializationError err = deserializeJson(doc, configFile);
-    configFile.close();
-    if (err) {
-      Serial.print(F("[saveBrightness] Error parsing config.json: "));
-      Serial.println(err.f_str());
-      return false;
+    JsonArray ssidArray = doc["ssids"].to<JsonArray>();
+    JsonArray pwdArray = doc["passwords"].to<JsonArray>();
+    for (int i=0;i<10;i++) {
+      ssidArray[i] = ssids[i];
+      pwdArray[i] = ssids[i];
     }
-  }
-  
-  doc[F("brightness")] = brightness;
 
-  if (LittleFS.exists("/config.json")) {
-    LittleFS.rename("/config.json", "/config.bak");
-  }
+    JsonObject countupdownObj = doc["countupdown"].to<JsonObject>();
+    countupdownObj["targetTimestamp"] = countupdownTargetTimestamp;
 
-  File f = LittleFS.open("/config.json", "w");
-  if (!f) {
-    Serial.println(F("[saveBrightness] ERROR: Cannot write to /config.json"));
-    return false;
-  }
+    size_t total = LittleFS.totalBytes();
+    size_t used = LittleFS.usedBytes();
+    Serial.printf("[SAVE] LittleFS total bytes: %llu, used bytes: %llu\n", LittleFS.totalBytes(), LittleFS.usedBytes());
 
-  size_t bytesWritten = serializeJson(doc, f);
-  f.close();
-
-  Serial.printf("[saveBrightness] Config updated. %u bytes written.\n", bytesWritten);
-  return true;
-}
-
-bool saveFlipDisplay() {
-  JsonDocument doc;
-
-  File configFile = LittleFS.open("/config.json", "r");
-  if (configFile) {
-    DeserializationError err = deserializeJson(doc, configFile);
-    configFile.close();
-    if (err) {
-      Serial.print(F("[saveFlipDisplay] Error parsing config.json: "));
-      Serial.println(err.f_str());
-      return false;
+    if (LittleFS.exists("/config.json")) {
+      Serial.println(F("[SAVE] Renaming /config.json to /config.bak"));
+      LittleFS.rename("/config.json", "/config.bak");
     }
-  }
-  
-  doc[F("flipDisplay")] = flipDisplay;
+    File f = LittleFS.open("/config.json", "w");
+    if (!f) {
+      Serial.println(F("[SAVE] ERROR: Failed to open /config.json for writing!"));
+      LittleFS.rename("/config.bak", "/config.json");
+      JsonDocument errorDoc;
+      errorDoc[F("error")] = "Failed to write config file.";
+      String response;
+      serializeJson(errorDoc, response);
+      return response;
+    }
 
-  if (LittleFS.exists("/config.json")) {
-    LittleFS.rename("/config.json", "/config.bak");
-  }
+    size_t bytesWritten = serializeJson(doc, f);
+    Serial.printf("[SAVE] Bytes written to /config.json: %u\n", bytesWritten);
+    f.close();
+    Serial.println(F("[SAVE] /config.json file closed."));
 
-  File f = LittleFS.open("/config.json", "w");
-  if (!f) {
-    Serial.println(F("[saveFlipDisplay] ERROR: Cannot write to /config.json"));
-    return false;
-  }
+    File verify = LittleFS.open("/config.json", "r");
+    if (!verify) {
+      Serial.println(F("[SAVE] ERROR: Failed to open /config.json for reading during verification!"));
+      LittleFS.rename("/config.bak", "/config.json");
+      JsonDocument errorDoc;
+      errorDoc[F("error")] = "Verification failed: Could not re-open config file.";
+      String response;
+      serializeJson(errorDoc, response);
+      return response;
+    }
 
-  size_t bytesWritten = serializeJson(doc, f);
-  f.close();
+    while (verify.available()) {
+      verify.read();
+    }
+    verify.seek(0);
 
-  Serial.printf("[saveFlipDisplay] Config updated. %u bytes written.\n", bytesWritten);
-  return true;
+    JsonDocument test;
+    DeserializationError err = deserializeJson(test, verify);
+    verify.close();
+
+    if (err) {
+      Serial.print(F("[SAVE] Config corrupted after save: "));
+      LittleFS.rename("/config.bak", "/config.json");
+      Serial.println(err.f_str());
+      JsonDocument errorDoc;
+      errorDoc[F("error")] = String("Config corrupted. Error: ") + err.f_str();
+      String response;
+      serializeJson(errorDoc, response);
+      return response;
+    }
+
+    return "";
 }
 
 // -----------------------------------------------------------------------------
 // WiFi Setup
 // -----------------------------------------------------------------------------
 const char *DEFAULT_AP_PASSWORD = "chrono157";
-const char *AP_SSID = "ChronoClock";
+const char *AP_SSID = "chronoclock";
 
 void connectWiFi() {
   Serial.println(F("[WIFI] Connecting to WiFi..."));
 
-  bool credentialsExist = false;
-
-  for (int i=0; i<10; i++) {
-    credentialsExist = credentialsExist || (strlen(ssids[i]) > 0);
-  }
-
-  if (!credentialsExist) {
-    Serial.println(F("[WIFI] No saved credentials. Starting AP mode directly."));
-    WiFi.mode(WIFI_AP);
-    WiFi.disconnect(true);
-    delay(100);
-
-    if (strlen(DEFAULT_AP_PASSWORD) < 8) {
-      WiFi.softAP(AP_SSID);
-      Serial.println(F("[WIFI] AP Mode started (no password, too short)."));
-    } else {
-      WiFi.softAP(AP_SSID, DEFAULT_AP_PASSWORD);
-      Serial.println(F("[WIFI] AP Mode started."));
-    }
-
-    IPAddress apIP(192, 168, 4, 1);
-    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-    dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
-    Serial.print(F("[WIFI] AP IP address: "));
-    Serial.println(WiFi.softAPIP());
-    isAPMode = true;
-
-    WiFiMode_t mode = WiFi.getMode();
-    Serial.printf("[WIFI] WiFi mode after setting AP: %s\n",
-                  mode == WIFI_OFF    ? "OFF"
-                : mode == WIFI_STA    ? "STA ONLY"
-                : mode == WIFI_AP     ? "AP ONLY"
-                : mode == WIFI_AP_STA ? "AP + STA (Error!)"
-                                      : "UNKNOWN");
-
-    Serial.println(F("[WIFI] AP Mode Started"));
-    return;
-  }
-
-  // If credentials exist, attempt STA connection
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true);
+  dnsServer.stop();
   delay(100);
-
+  
   for (int i=0;i<10;i++) {
     if (strlen(ssids[i]) > 0) {
+      // If credentials exist, attempt STA connection
       WiFi.begin(ssids[i], passwords[i]);
       unsigned long startAttemptTime = millis();
     
@@ -314,7 +261,7 @@ void connectWiFi() {
         unsigned long now = millis();
         // Connection successful
         if (WiFi.status() == WL_CONNECTED) {
-          Serial.println("[WiFi] Connected: " + WiFi.localIP().toString());
+          Serial.println("[WIFI] Connected: " + WiFi.localIP().toString());
           isAPMode = false;
           WiFiMode_t mode = WiFi.getMode();
           Serial.printf("[WIFI] WiFi mode after STA connection: %s\n",
@@ -330,31 +277,32 @@ void connectWiFi() {
         }
         delay(1);
       }
-    } // End animation
-    // Break loop when connected to a network.
-    if (WiFi.status() == WL_CONNECTED) {
-      break;
-    }
-  } // End loop for connecting to Wifi
+      // Break loop when connected to a network.
+      if (WiFi.status() == WL_CONNECTED) {
+        break;
+      }
+    } // END ssid length check
+  }
+
   // Didn't connect to any network.
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println(F("[WiFi] Failed. Starting AP mode..."));
+    Serial.println(F("[WIFI] Unable to connect to a Wifi network. Starting AP mode..."));
     WiFi.mode(WIFI_AP);
     WiFi.softAP(AP_SSID, DEFAULT_AP_PASSWORD);
-    Serial.print(F("[WiFi] AP IP address: "));
+    Serial.print(F("[WIFI] AP IP address: "));
     Serial.println(WiFi.softAPIP());
     dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
     isAPMode = true;
     WiFiMode_t mode = WiFi.getMode();
+    Serial.println(F("[WIFI] AP Mode Started"));
     Serial.printf("[WIFI] WiFi mode after STA failure and setting AP: %s\n",
                   mode == WIFI_OFF ? "OFF"
                 : mode == WIFI_STA    ? "STA ONLY"
                 : mode == WIFI_AP     ? "AP ONLY"
                 : mode == WIFI_AP_STA ? "AP + STA (Error!)"
                                       : "UNKNOWN");
-    Serial.println(F("[WIFI] AP Mode Started"));
   }
-  // Wifi connected, start mdns
+  // Start mdns
   if (!MDNS.begin(mdns)) {
     Serial.println(F("[WIFI] Error setting up mDNS responder."));
     while (1) {
@@ -362,43 +310,6 @@ void connectWiFi() {
     }
   }
   Serial.println(F("[WIFI] mDNS responder started."));
-}
-
-void clearWiFiCredentialsInConfig() {
-  JsonDocument doc;
-
-  // Open existing config, if present
-  File configFile = LittleFS.open("/config.json", "r");
-  if (configFile) {
-    DeserializationError err = deserializeJson(doc, configFile);
-    configFile.close();
-    if (err) {
-      Serial.print(F("[SECURITY] Error parsing config.json: "));
-      Serial.println(err.f_str());
-      return;
-    }
-  }
-
-  JsonArray ssidArray = doc["ssids"].to<JsonArray>();
-  JsonArray pwdArray = doc["passwords"].to<JsonArray>();
-  for (int i=0;i<10;i++) {
-    ssidArray.add("");
-    pwdArray.add("");
-  }
-
-  // Optionally backup previous config
-  if (LittleFS.exists("/config.json")) {
-    LittleFS.rename("/config.json", "/config.bak");
-  }
-
-  File f = LittleFS.open("/config.json", "w");
-  if (!f) {
-    Serial.println(F("[SECURITY] ERROR: Cannot write to /config.json to clear credentials!"));
-    return;
-  }
-  serializeJson(doc, f);
-  f.close();
-  Serial.println(F("[SECURITY] Cleared WiFi credentials in config.json."));
 }
 
 // -----------------------------------------------------------------------------
@@ -427,7 +338,6 @@ void startNTPSync(bool resetTime, int retryCount = 0) {
   }
   ntpState = NTP_SYNCING;
   ntpStartTime = millis();
-  ntpSyncSuccessful = false;
   if (serverOk) {
     configTime(0, 0, ntpServer1, ntpServer2);
     setenv("TZ", ianaToPosix(timeZone), 1);
@@ -512,32 +422,18 @@ void setupWebServer() {
   server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) {
     Serial.println(F("[WEBSERVER] Request: /save"));
     bool restartWifi = false;
-    JsonDocument doc;
-    File configFile = LittleFS.open("/config.json", "r");
-    if (configFile) {
-      Serial.println(F("[WEBSERVER] Existing config.json found, loading for update..."));
-      DeserializationError err = deserializeJson(doc, configFile);
-      configFile.close();
-      if (err) {
-        Serial.print(F("[WEBSERVER] Error parsing existing config.json: "));
-        Serial.println(err.f_str());
-      }
-    } else {
-      Serial.println(F("[WEBSERVER] config.json not found, starting with empty doc for save."));
-    }
 
-    JsonArray ssidArray = doc["ssids"];
-    JsonArray pwdArray = doc["passwords"];
-
+    String countupdownDateStr = "";
+    String countupdownTimeStr = "";
     for (int i = 0; i < request->params(); i++) {
       const AsyncWebParameter *p = request->getParam(i);
       String n = p->name();
       String v = p->value();
 
       if (n == "brightness") {
-        doc[n] = v.toInt();
+        brightness = v.toInt();
       } else if (n == "flipDisplay") {
-        doc[n] = (v == "true" || v == "on" || v == "1");
+        flipDisplay = (v == "true" || v == "on" || v == "1");
       } else if (n == "password0"
               || n == "password1"
               || n == "password2"
@@ -550,15 +446,13 @@ void setupWebServer() {
               || n == "password9") {
         if (v != "********" && v.length() > 0) {
           int num = n.substring(8,9).toInt();
-          pwdArray[num] = v; // user entered a new password
-          Serial.print(F("[SAVE] Password change: "));
-          Serial.println(num+1);
+          Serial.printf("[WEBSERVER] Password change: %d\n", num+1);
           if (String(passwords[num]) != v) {
             restartWifi = true;
           }
-          strlcpy(passwords[num], v.c_str(), sizeof(passwords[num]));
+          strlcpy(passwords[num], v.c_str(), sizeof(passwords[num])); // user entered a new password
         } else {
-          Serial.println(F("[SAVE] Password unchanged."));
+          Serial.println(F("[WEBSERVER] Password unchanged."));
           // do nothing, keep the one already in doc
         }
       } else if (n == "ssid0"
@@ -572,122 +466,65 @@ void setupWebServer() {
               || n == "ssid8"
               || n == "ssid9") {
         int num = n.substring(4,5).toInt();
-        ssidArray[num] = v;
-        Serial.print(F("[SAVE] SSID change: "));
-        Serial.print(v);
-        Serial.print(F(" - "));
-        Serial.println(num);
+        Serial.printf("[WEBSERVER] SSID #%d change: %s\n", num+1, v);
         if (String(ssids[num]) != v) {
           restartWifi = true;
         }
         strlcpy(ssids[num], v.c_str(), sizeof(ssids[num]));
-      } else if (n != "countupdownDate" && n != "countupdownTime" && n != "mode") {
-        doc[n] = v;
+      } else if (n == "ntpServer1") {
+        strlcpy(ntpServer1, v.c_str(), sizeof(ntpServer1));
+      } else if (n == "ntpServer2") {
+        strlcpy(ntpServer2, v.c_str(), sizeof(ntpServer2));
+      } else if (n == "timeZone") {
+        strlcpy(timeZone, v.c_str(), sizeof(timeZone));
+      } else if (n == "mdns") {
+        strlcpy(mdns, v.c_str(), sizeof(mdns));
+      } else if (n == "countupdownDate") {
+        countupdownDateStr = v;
+      } else if (n == "coundupdownTime") {
+        countupdownTimeStr = v;
       }
     }
 
-    String countupdownDateStr = request->hasParam("countupdownDate", true) ? request->getParam("countupdownDate", true)->value() : "";
-    String countupdownTimeStr = request->hasParam("countupdownTime", true) ? request->getParam("countupdownTime", true)->value() : "";
-
-    time_t newTargetTimestamp = 0;
+    time_t countupdownTargetTimestamp = 0;
     if (countupdownDateStr.length() > 0 && countupdownTimeStr.length() > 0) {
-      int year = countupdownDateStr.substring(0, 4).toInt();
-      int month = countupdownDateStr.substring(5, 7).toInt();
-      int day = countupdownDateStr.substring(8, 10).toInt();
-      int hour = countupdownTimeStr.substring(0, 2).toInt();
-      int minute = countupdownTimeStr.substring(3, 5).toInt();
-      int second = countupdownTimeStr.substring(6, 8).toInt();
-
       struct tm tm;
-      tm.tm_year = year - 1900;
-      tm.tm_mon = month - 1;
-      tm.tm_mday = day;
-      tm.tm_hour = hour;
-      tm.tm_min = minute;
-      tm.tm_sec = second;
+      tm.tm_year = countupdownDateStr.substring(0, 4).toInt() - 1900;
+      tm.tm_mon = countupdownDateStr.substring(5, 7).toInt() - 1;
+      tm.tm_mday = countupdownDateStr.substring(8, 10).toInt();
+      tm.tm_hour = countupdownTimeStr.substring(0, 2).toInt();
+      tm.tm_min = countupdownTimeStr.substring(3, 5).toInt();
+      tm.tm_sec = countupdownTimeStr.substring(6, 8).toInt();
       tm.tm_isdst = -1;
 
-      newTargetTimestamp = mktime(&tm);
-      if (newTargetTimestamp == (time_t)-1) {
-        Serial.println("[SAVE] Error converting countupdown date/time to timestamp.");
-        newTargetTimestamp = 0;
+      countupdownTargetTimestamp = mktime(&tm);
+      if (countupdownTargetTimestamp == (time_t)-1) {
+        Serial.println("[WEBSERVER] Error converting countupdown date/time to timestamp.");
+        countupdownTargetTimestamp = 0;
       } else {
-        Serial.printf("[SAVE] Converted countupdown target: %s %s -> %lu\n", countupdownDateStr.c_str(), countupdownTimeStr.c_str(), newTargetTimestamp);
+        Serial.printf("[WEBSERVER] Converted countupdown target: %s %s -> %lu\n", countupdownDateStr.c_str(), countupdownTimeStr.c_str(), countupdownTargetTimestamp);
       }
-      countupdownTargetTimestamp = newTargetTimestamp;
+    }
+
+    String msg = saveConfig();
+    if (msg.length() > 0) {
+      request->send(500, "application/json", msg);
     } else {
-      countupdownTargetTimestamp = 0;
-    }
-
-    JsonObject countupdownObj = doc["countupdown"].to<JsonObject>();
-    countupdownObj["targetTimestamp"] = countupdownTargetTimestamp;
-
-    size_t total = LittleFS.totalBytes();
-    size_t used = LittleFS.usedBytes();
-    Serial.printf("[SAVE] LittleFS total bytes: %llu, used bytes: %llu\n", LittleFS.totalBytes(), LittleFS.usedBytes());
-
-    if (LittleFS.exists("/config.json")) {
-      Serial.println(F("[SAVE] Renaming /config.json to /config.bak"));
-      LittleFS.rename("/config.json", "/config.bak");
-    }
-    File f = LittleFS.open("/config.json", "w");
-    if (!f) {
-      Serial.println(F("[SAVE] ERROR: Failed to open /config.json for writing!"));
-      JsonDocument errorDoc;
-      errorDoc[F("error")] = "Failed to write config file.";
+      Serial.println(F("[WEBSERVER] Config verification successful."));
+      JsonDocument okDoc;
+      okDoc[F("message")] = "Saved successfully.";
       String response;
-      serializeJson(errorDoc, response);
-      request->send(500, "application/json", response);
-      return;
+      serializeJson(okDoc, response);
+      request->send(200, "application/json", response);
     }
 
-    size_t bytesWritten = serializeJson(doc, f);
-    Serial.printf("[SAVE] Bytes written to /config.json: %u\n", bytesWritten);
-    f.close();
-    Serial.println(F("[SAVE] /config.json file closed."));
-
-    File verify = LittleFS.open("/config.json", "r");
-    if (!verify) {
-      Serial.println(F("[SAVE] ERROR: Failed to open /config.json for reading during verification!"));
-      JsonDocument errorDoc;
-      errorDoc[F("error")] = "Verification failed: Could not re-open config file.";
-      String response;
-      serializeJson(errorDoc, response);
-      request->send(500, "application/json", response);
-      return;
-    }
-
-    while (verify.available()) {
-      verify.read();
-    }
-    verify.seek(0);
-
-    JsonDocument test;
-    DeserializationError err = deserializeJson(test, verify);
-    verify.close();
-
-    if (err) {
-      Serial.print(F("[SAVE] Config corrupted after save: "));
-      Serial.println(err.f_str());
-      JsonDocument errorDoc;
-      errorDoc[F("error")] = String("Config corrupted. Reboot cancelled. Error: ") + err.f_str();
-      String response;
-      serializeJson(errorDoc, response);
-      request->send(500, "application/json", response);
-      return;
-    }
-
-    Serial.println(F("[SAVE] Config verification successful."));
-    JsonDocument okDoc;
-    okDoc[F("message")] = "Saved successfully. Rebooting...";
-    String response;
-    serializeJson(okDoc, response);
-    request->send(200, "application/json", response);
-    Serial.println(F("[WEBSERVER] Sending success response and scheduling reboot..."));
-
-    if (restartWifi) {
-      connectWiFi();
-    }
+    request->onDisconnect([&restartWifi]() {
+      Serial.println(F("[WEBSERVER] Restarting WiFi connection..."));
+      if (restartWifi) {
+        Serial.println(F("[WEBSERVER] WiFi information changed, restarting WiFi."));
+        connectWiFi();
+      }
+    });
   });
 
   server.on("/restore", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -730,7 +567,6 @@ void setupWebServer() {
         Serial.println(F("[WEBSERVER] Rebooting after restore..."));
         ESP.restart();
       });
-
     } else {
       Serial.println(F("[WEBSERVER] No backup found"));
       JsonDocument errorDoc;
@@ -743,17 +579,28 @@ void setupWebServer() {
 
   server.on("/clear_wifi", HTTP_POST, [](AsyncWebServerRequest *request) {
     Serial.println(F("[WEBSERVER] Request: /clear_wifi"));
-    clearWiFiCredentialsInConfig();
+
+    for (int i=0;i<10;i++) {
+      strlcpy(ssids[i], "", sizeof(ssids[i]));
+      strlcpy(passwords[i], "", sizeof(passwords[i]));
+    }
+    String msg = saveConfig();
+    if (msg.length() > 0) {
+      Serial.println(F("[CLEARWIFI] Error saving cleared WiFi credentials."));
+      request->send(500, "application/json", msg);
+      return;
+    }
+    Serial.println(F("[CLEARWIFI] WiFi credentials cleared."));
 
     JsonDocument okDoc;
-    okDoc[F("message")] = "✅ WiFi credentials cleared! Rebooting...";
+    okDoc[F("message")] = "✅ WiFi credentials cleared! Restarting WiFi...";
     String response;
     serializeJson(okDoc, response);
     request->send(200, "application/json", response);
 
     request->onDisconnect([]() {
-      Serial.println(F("[WEBSERVER] Rebooting after clearing WiFi..."));
-      ESP.restart();
+      Serial.println(F("[WEBSERVER] Restarting WiFi connection..."));
+      connectWiFi();
     });
   });
   
@@ -780,7 +627,11 @@ void setupWebServer() {
     Serial.printf("[WEBSERVER] Setting brightness to %d from %d\n", newBrightness, brightness);
     brightness = newBrightness;
     P.setIntensity(brightness);
-    saveBrightnessConfig(brightness);
+    String msg = saveConfig();
+    if (msg.length() > 0) {
+      request->send(500, "application/json", msg);
+      return;
+    }
     request->send(200, "application/json", "{\"ok\":true}");
   });
 
@@ -794,7 +645,7 @@ void setupWebServer() {
     P.setZoneEffect(0, flipDisplay, PA_FLIP_UD);
     P.setZoneEffect(0, flipDisplay, PA_FLIP_LR);
     Serial.printf("[WEBSERVER] Set flipDisplay to %d\n", flipDisplay);
-    saveFlipDisplay();
+    saveConfig();
     request->send(200, "application/json", "{\"ok\":true}");
   });
 
@@ -806,50 +657,68 @@ void setupWebServer() {
   server.on("/set_countupdown", HTTP_POST, [](AsyncWebServerRequest *request) {
     if (!request->hasParam("DateTime", true)) {
       request->send(400, "application/json", "{\"error\":\"Missing value\"}");
+      return;
     }
 
     String DateTimeStr = request->getParam("DateTime", true)->value();
 
     time_t newTargetTimestamp = 0;
     if (DateTimeStr.length() == 19) {
-      int year = DateTimeStr.substring(0, 4).toInt();
-      int month = DateTimeStr.substring(5, 7).toInt();
-      int day = DateTimeStr.substring(8, 10).toInt();
-      int hour = DateTimeStr.substring(11, 13).toInt();
-      int minute = DateTimeStr.substring(14, 16).toInt();
-      int second = DateTimeStr.substring(17, 19).toInt();
-
       struct tm tm;
-      tm.tm_year = year - 1900;
-      tm.tm_mon = month - 1;
-      tm.tm_mday = day;
-      tm.tm_hour = hour;
-      tm.tm_min = minute;
-      tm.tm_sec = second;
+      tm.tm_year = DateTimeStr.substring(0, 4).toInt() - 1900;
+      tm.tm_mon = DateTimeStr.substring(5, 7).toInt() - 1;
+      tm.tm_mday = DateTimeStr.substring(8, 10).toInt();
+      tm.tm_hour = DateTimeStr.substring(11, 13).toInt();
+      tm.tm_min = DateTimeStr.substring(14, 16).toInt();
+      tm.tm_sec = DateTimeStr.substring(17, 19).toInt();
       tm.tm_isdst = -1;
 
       newTargetTimestamp = mktime(&tm);
       if (newTargetTimestamp == (time_t)-1) {
-        Serial.println("[SAVE] Error converting countupdown date/time to timestamp.");
+        Serial.println("[WEBSERVER] Error converting countupdown date/time to timestamp.");
         newTargetTimestamp = 0;
       } else {
-        Serial.printf("[SAVE] Converted countupdown target: %s -> %lu\n", DateTimeStr.c_str(), newTargetTimestamp);
+        Serial.printf("[WEBSERVER] Converted countupdown target: %s -> %lu\n", DateTimeStr.c_str(), newTargetTimestamp);
       }
       countupdownTargetTimestamp = newTargetTimestamp;
-      saveCountupdownConfig(countupdownTargetTimestamp);
+      saveConfig();
     }
   });
 
   server.on("/start_countup", HTTP_GET, [](AsyncWebServerRequest *request) {
     DateTime dtNow = rtc.now();
     countupdownTargetTimestamp = dtNow.unixtime();
-    saveCountupdownConfig(countupdownTargetTimestamp);
+    saveConfig();
     request->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  server.on("/add_seconds", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (!request->hasParam("seconds", true)) {
+      request->send(400, "application/json", "{\"error\":\"Missing value\"}");
+      return;
+    }
+    countupdownTargetTimestamp += request->getParam("seconds", true)->value().toInt();
+  });
+
+  server.on("/remove_seconds", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (!request->hasParam("seconds", true)) {
+      request->send(400, "application/json", "{\"error\":\"Missing value\"}");
+      return;
+    }
+    countupdownTargetTimestamp -= request->getParam("seconds", true)->value().toInt();
+  });
+
+  server.on("/get_time", HTTP_GET, [](AsyncWebServerRequest *request){
+    DateTime dtNow = rtc.now();
+    char dateTimeJson[48];
+    sprintf(dateTimeJson, "{\"time\":\"%04d-%02d-%02d %02d:%02d:%02d\"}", dtNow.year(), dtNow.month(), dtNow.day(), dtNow.hour(), dtNow.minute(), dtNow.second());
+    request->send(200, "application/json", dateTimeJson);
   });
 
   server.on("/set_time", HTTP_POST, [](AsyncWebServerRequest *request) {
     if (!request->hasParam("DateTime", true)) {
       request->send(400, "application/json", "{\"error\":\"Missing value\"}");
+      return;
     }
     String DateTimeStr = request->getParam("DateTime", true)->value();
     if (DateTimeStr.length() == 19) {
@@ -871,12 +740,20 @@ void setupWebServer() {
 
       time_t newTime = mktime(&tm);
       if (newTime != (time_t)-1) {
-        struct timeval now = {.tv_sec = newTime };
-        settimeofday(&now, NULL);
-        rtc.adjust(DateTime(time(nullptr)));
+        struct timeval newNow = {.tv_sec = newTime };
+        setenv("TZ", ianaToPosix(timeZone), 1);
+        tzset();
+        settimeofday(&newNow, NULL);
+        time_t now_time = time(nullptr);
+        struct tm timeinfo;
+        localtime_r(&now_time, &timeinfo);
+        rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
       }
     }
-    request->send(200, "application/json", "{\"ok\":true}");
+    DateTime dtNow = rtc.now();
+    char dateTimeJson[48];
+    sprintf(dateTimeJson, "{\"time\":\"%04d-%02d-%02d %02d:%02d:%02d\"}", dtNow.hour(), dtNow.minute(), dtNow.second());
+    request->send(200, "application/json", dateTimeJson);
   });
 
   server.on("/ntp_sync", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -896,13 +773,12 @@ void setupWebServer() {
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println();
   Serial.println(F("[SETUP] Starting setup..."));
 
   // Check if RTC was found.
   if (!rtc.begin()) {
     Serial.println(F("[SETUP] Unable to find RTC."));
-    return;
+    while (1) delay(10);
   }
 
   // Set time if new device or after a power loss.
@@ -913,7 +789,7 @@ void setup() {
   if (!LittleFS.begin(true)) {
     Serial.println(F("[ERROR] LittleFS mount failed in setup! Halting."));
     while (true) {
-      delay(1000);
+      delay(100);
       yield();
     }
   }
@@ -942,9 +818,7 @@ void setup() {
   }
 
   setupWebServer();
-  Serial.println(F("[SETUP] Webserver setup complete"));
   Serial.println(F("[SETUP] Setup complete"));
-  Serial.println();
   printConfigToSerial();
   lastColonBlink = millis();
 }
@@ -969,11 +843,9 @@ void loop() {
         time_t lNow = time(nullptr);
         if (lNow > 1000) {  // NTP sync successful
           Serial.println(F("[TIME] NTP sync successful."));
-          ntpSyncSuccessful = true;
           ntpState = NTP_SUCCESS;
         } else if (millis() - ntpStartTime > ntpTimeout && ntpRetryCount < maxNtpRetries) {
           Serial.println(F("[TIME] NTP sync failed."));
-          ntpSyncSuccessful = false;
           ntpState = NTP_FAILED;
         } else if (ntpRetryCount >= maxNtpRetries) {
           ntpState = NTP_IDLE;
