@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chrono Clock Settings</title>
+<style>
+  :root{
+    --accent-color: #0075ff;
+  }
+  * { box-sizing: border-box; }
+  html{
+    background: radial-gradient(ellipse at 70% 0%, #2b425a 0%, #171e23 100%);  
+    height: 100%;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+    margin: 0;
+    padding: 2rem 1rem;
+    color: #FFFFFF;
+    background-repeat: no-repeat, repeat, repeat; 
+    opacity: 0;
+    transition: opacity 0.6s cubic-bezier(.4,0,.2,1);
+    visibility: hidden;
+    height: 100%;
+    line-height: 1.5;
+  }
+
+  body.loaded {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  body.modal-open {
+    overflow: hidden;
+  }
+  h1 { 
+    text-align: center; 
+    font-size: 1.5rem; 
+    margin-bottom: 1.5rem; 
+    color: #ffffff; 
+  }
+  h2{
+    margin-top: 2rem;
+    margin-bottom: 0;
+  }
+
+  h2:first-of-type{
+    margin-top: 1.5rem;
+  }
+
+  .logo svg{
+    filter: drop-shadow(0px 0px 0.5rem #1ec7fa);
+    width: 100%;
+    height: auto;
+    color: #c2f0ff;
+    margin: 0.5rem 0;
+  }
+  form {
+    display: flex; flex-direction: column;
+    max-width: 500px; margin: 0 auto;
+    background: linear-gradient(120deg, rgba(45,65,90,0.72) 0%, rgba(53,133,183,0.38) 100%); 
+    padding: 1.5rem;
+    border-radius: 24px;
+    box-shadow: 0 10px 36px 0 rgba(40,170,255,0.11), 0 2px 8px 0 rgba(44, 70, 110, 0.08);
+    border: 1.5px solid rgba(180, 230, 255, 0.10)
+  }  
+  label {
+    font-size: 0.9rem; 
+    display: block; 
+    margin-top: 0.75rem; 
+  }
+  input[type="text"], 
+  input[type="time"],   
+  input[type="password"], 
+  input[type="date"],
+  input[type="number"], select {
+    width: 100%; padding: 0.75rem;
+    border: 1.5px solid rgba(180, 230, 255, 0.08);
+    border-radius: 8px;
+    background-color: rgba(225,245,255,0.07); 
+    color: #ffffff;
+    font-size: 1rem; appearance: none;
+  }
+
+  input[type="time"]:disabled ,
+  input[type="text"]:disabled ,
+  input[type="number"]:disabled ,
+  input[type="date"]:disabled{
+    color: rgba(255, 255, 255, 0.250);
+  }
+
+  input[type="submit"] {
+    background-color: #007aff; color: white;
+    padding: 0.9rem; font-size: 1rem;
+    border: none; border-radius: 8px;
+    cursor: pointer; transition: background-color 0.2s ease-in-out;
+  }
+  input[type="submit"]:hover {
+    background-color: #005ecb;
+  }
+
+  input[type="time"]::-webkit-calendar-picker-indicator, input[type="date"]::-webkit-calendar-picker-indicator{
+    filter: invert(100%);
+  }
+
+  /* Enabled & checked toggle */
+  .toggle-switch input[type="checkbox"]:checked + .toggle-slider {
+    background-color: var(--accent-color);
+  }
+
+  /* Disabled toggle (regardless of checked state) */
+  .toggle-switch input[type="checkbox"]:disabled + .toggle-slider { background-color: transparent !important; border: solid 1px #cccccc2e; cursor: not-allowed; }
+  .toggle-switch input[type="checkbox"]:disabled + .toggle-slider::before {
+    background-color: rgba(204, 204, 204, 0.5);
+  }
+
+  input:-webkit-autofill,
+  input:-webkit-autofill:focus,
+  input:-webkit-autofill:hover {
+    background: rgba(225,245,255,0.07) !important;
+    color: #fff !important;
+    -webkit-box-shadow: 0 0 0 1000px rgba(225,245,255,0.07) inset !important;
+    box-shadow: 0 0 0 1000px rgba(225,245,255,0.07) inset !important;
+    -webkit-text-fill-color: #fff !important;
+    transition: background 9999s ease-in-out 0s;
+  }
+
+  input::placeholder, 
+  textarea::placeholder {
+    color: hwb(0 100% 0% / 0.39);      /* Example: light blue */
+    opacity: 1;          /* Make sure it's not semi-transparent */
+  }
+
+  .form-row { 
+    display: flex; 
+    flex-direction: column; 
+  }
+
+  .form-row.two-col { 
+    flex-direction: column;
+  }
+  .form-row.two-col > div { 
+    flex: 1;
+  }
+  .primary-button {
+    background: linear-gradient(90deg, #3e99bc, #47add4 85%);
+    color: white;
+    padding: 0.9rem; font-size: 1rem; font-weight: 600;
+    border: none; border-radius: 8px;
+    cursor: pointer; text-align: center;
+    transition: background 0.25s, transform 0.15s ease-in-out;
+  }
+  .primary-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0, 122, 255, 0.35);
+  }
+  .primary-button:active {
+    transform: scale(0.97); 
+  }  
+
+  .note { 
+    font-size: 0.85rem; 
+    text-align: center; 
+    margin-top: 1rem; 
+  }
+  #savingModal {
+    backdrop-filter: blur(5px);
+    position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: radial-gradient(ellipse at 70% 0%, hsl(210.64deg 35.34% 26.08% / 60%) 0%, #171e2399 100%);
+    display: none; justify-content: center; align-items: center;
+    z-index: 1000;
+  }
+  #savingModalContent {
+    background: linear-gradient(120deg, rgb(45 65 90) 0%, rgb(53 133 183 / 44%) 100%);
+    border-radius: 12px;
+    box-shadow: 0 10px 36px 0 rgba(40, 170, 255, 0.11), 0 2px 8px 0 rgba(44, 70, 110, 0.08);
+    border: 1.5px solid rgba(180, 230, 255, 0.10);
+    margin: 1.5rem;
+    padding: 2rem 2.5rem;
+    text-align: center;
+  }  
+  .spinner {
+    border: 4px solid rgba(255, 255, 255, 0.2);
+    border-top: 4px solid #007aff;
+    border-radius: 50%;
+    width: 36px; height: 36px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 1rem;
+  }
+  .footer{
+    font-size: 0.8rem;
+    text-align: center;
+    margin-top: 1rem;
+  }
+  a{
+    color: white;
+  }
+
+  .small{
+    display: block;
+    font-size: 0.8rem;
+    margin-top: 0.25rem;
+  }
+
+  select option {
+    color: black;
+  }
+
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
+  @media (min-width: 361px) {
+    .form-row.two-col { 
+      flex-direction: row; 
+      gap: 1rem; }
+
+      #openWeatherCountry{
+        margin-top: 0;
+      }
+  }
+
+  /* Toggle Switch Styling for Flip Display */
+  .toggle-switch { position: relative; display: inline-block; width: 48px; height: 24px; }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #ccc; transition: .4s; border-radius: 24px;
+  }
+  .toggle-slider:before {
+    position: absolute; content: ""; height: 20px; width: 20px; left: 2px; bottom: 2px;
+    background-color: white; transition: .4s; border-radius: 50%;
+  }
+  input:checked + .toggle-slider { background-color: var(--accent-color); }
+  input:checked + .toggle-slider:before { transform: translateX(24px); }
+
+  .accent{
+    accent-color: var(--accent-color);
+  }
+</style>
+</head>
+<body>
+
+<form id="configForm" onsubmit="submitConfig(event)">
+  <div class="logo">
+    <h1>ChronoClock</h1>
+  </div>
+  <h2>WiFi Settings</h2>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="ssid0">SSID 1</label>
+      <input type="text" id="ssid0" name="ssid0" />
+    </div>
+    <div class="form-group">
+      <label for="password0">Password</label>
+      <input type="password" id="password0" name="password0" placeholder="" />
+    </div>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="ssid1">SSID 2</label>
+      <input type="text" id="ssid1" name="ssid1" />
+    </div>
+    <div class="form-group">
+      <label for="password1">Password</label>
+      <input type="password" id="password1" name="password1" placeholder="" />
+    </div>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="ssid2">SSID 3</label>
+      <input type="text" id="ssid2" name="ssid2" />
+    </div>
+    <div class="form-group">
+      <label for="password2">Password</label>
+      <input type="password" id="password2" name="password2" placeholder="" />
+    </div>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="ssid3">SSID 4</label>
+      <input type="text" id="ssid3" name="ssid3" />
+    </div>
+    <div class="form-group">
+      <label for="password3">Password</label>
+      <input type="password" id="password3" name="password3" placeholder="" />
+    </div>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="ssid4">SSID 5</label>
+      <input type="text" id="ssid4" name="ssid4" />
+    </div>
+    <div class="form-group">
+      <label for="password4">Password</label>
+      <input type="password" id="password4" name="password4" placeholder="" />
+    </div>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="ssid5">SSID 6</label>
+      <input type="text" id="ssid5" name="ssid5" />
+    </div>
+    <div class="form-group">
+      <label for="password5">Password</label>
+      <input type="password" id="password5" name="password5" placeholder="" />
+    </div>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="ssid6">SSID 7</label>
+      <input type="text" id="ssid6" name="ssid6" />
+    </div>
+    <div class="form-group">
+      <label for="password6">Password</label>
+      <input type="password" id="password6" name="password6" placeholder="" />
+    </div>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="ssid7">SSID 8</label>
+      <input type="text" id="ssid7" name="ssid7" />
+    </div>
+    <div class="form-group">
+      <label for="password7">Password</label>
+      <input type="password" id="password7" name="password7" placeholder="" />
+    </div>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="ssid8">SSID 9</label>
+      <input type="text" id="ssid8" name="ssid8" />
+    </div>
+    <div class="form-group">
+      <label for="password8">Password</label>
+      <input type="password" id="password8" name="password8" placeholder="" />
+    </div>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="ssid9">SSID 10</label>
+      <input type="text" id="ssid9" name="ssid9" />
+    </div>
+    <div class="form-group">
+      <label for="password9">Password</label>
+      <input type="password" id="password9" name="password9" placeholder="" />
+    </div>
+  </div>
+  <label class="small"><input type="checkbox" id="togglePassword" style="margin-right: 0.3rem;" />Show Password</label>
+  <label for="mdns">mDNS</label>
+  <input type="text" id="mdns" name="mdns" />
+  <h2>Countup/Countdown Settings</h2>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <label for="countupdownDate">Date:</label>
+      <input type="date" id="countupdownDate" name="countupdownDate" class="form-control">
+    </div>
+    <div class="form-group">
+      <label for="countupdownTime">Time:</label>
+      <input type="time" step="1" id="countupdownTime" name="countupdownTime" class="form-control">
+    </div>
+  </div>
+  <h2>Display Settings</h2>
+  <div class="toggles" style="padding: 0 1rem;">
+    <label style="display: flex; align-items: center; margin-top: 1.75rem; justify-content: space-between;">
+      <span style="margin-right: 0.5em;">Flip Display (180°):</span>
+      <span class="toggle-switch">
+        <input type="checkbox" id="flipDisplay" name="flipDisplay" onchange="setFlipDisplay(this.checked)">
+        <span class="toggle-slider"></span>
+      </span>
+    </label>
+  </div>
+  <label style="margin-top: 1.75rem;">Brightness: <span id="brightnessValue">10</span></label>
+  <input style="width: 100%;" type="range" min="1" max="15" name="brightness" id="brightnessSlider" value="10" 
+          oninput="brightnessValue.textContent = (this.value); setBrightnessLive(this.value);">
+  <h2>Time Settings</h2>
+  <label>Primary NTP Server:</label>
+  <input type="text" name="ntpServer1" id="ntpServer1" placeholder="Enter NTP address">
+  <label>Secondary NTP Server:</label>
+  <input type="text" name="ntpServer2" id="ntpServer2" placeholder="Enter NTP address">
+  <label for="timeZone">Time Zone</label>
+  <select id="timeZone" name="timeZone" required>
+    <option value="" disabled selected>Select your time zone</option>
+    <option value="Africa/Cairo">Africa/Cairo</option>
+    <option value="Africa/Casablanca">Africa/Casablanca</option>
+    <option value="Africa/Johannesburg">Africa/Johannesburg</option>
+    <option value="America/Anchorage">America/Anchorage</option>
+    <option value="America/Argentina/Buenos_Aires">America/Argentina/Buenos_Aires</option>
+    <option value="America/Chicago">America/Chicago</option>
+    <option value="America/Denver">America/Denver</option>
+    <option value="America/Guatemala">America/Guatemala</option>
+    <option value="America/Halifax">America/Halifax</option>
+    <option value="America/Los_Angeles">America/Los_Angeles</option>
+    <option value="America/Mexico_City">America/Mexico_City</option>
+    <option value="America/New_York">America/New_York</option>
+    <option value="America/Phoenix">America/Phoenix</option>
+    <option value="America/Santiago">America/Santiago</option>
+    <option value="America/Sao_Paulo">America/Sao_Paulo</option>
+    <option value="America/St_Johns">America/St_Johns</option>
+    <option value="America/Toronto">America/Toronto</option>
+    <option value="America/Vancouver">America/Vancouver</option>
+    <option value="Asia/Almaty">Asia/Almaty</option>
+    <option value="Asia/Amman">Asia/Amman</option>
+    <option value="Asia/Baghdad">Asia/Baghdad</option>
+    <option value="Asia/Bangkok">Asia/Bangkok</option>
+    <option value="Asia/Beirut">Asia/Beirut</option>
+    <option value="Asia/Dhaka">Asia/Dhaka</option>
+    <option value="Asia/Dubai">Asia/Dubai</option>
+    <option value="Asia/Ho_Chi_Minh">Asia/Ho_Chi_Minh</option>
+    <option value="Asia/Hong_Kong">Asia/Hong_Kong</option>
+    <option value="Asia/Jakarta">Asia/Jakarta</option>
+    <option value="Asia/Jerusalem">Asia/Jerusalem</option>
+    <option value="Asia/Karachi">Asia/Karachi</option>
+    <option value="Asia/Kathmandu">Asia/Kathmandu</option>
+    <option value="Asia/Kolkata">Asia/Kolkata</option>
+    <option value="Asia/Kuala_Lumpur">Asia/Kuala_Lumpur</option>
+    <option value="Asia/Manila">Asia/Manila</option>
+    <option value="Asia/Seoul">Asia/Seoul</option>
+    <option value="Asia/Shanghai">Asia/Shanghai</option>
+    <option value="Asia/Singapore">Asia/Singapore</option>
+    <option value="Asia/Taipei">Asia/Taipei</option>
+    <option value="Asia/Tashkent">Asia/Tashkent</option>
+    <option value="Asia/Tokyo">Asia/Tokyo</option>
+    <option value="Asia/Ulaanbaatar">Asia/Ulaanbaatar</option>
+    <option value="Asia/Yekaterinburg">Asia/Yekaterinburg</option>
+    <option value="Atlantic/Azores">Atlantic/Azores</option>
+    <option value="Atlantic/Reykjavik">Atlantic/Reykjavik</option>
+    <option value="Australia/Adelaide">Australia/Adelaide</option>
+    <option value="Australia/Brisbane">Australia/Brisbane</option>
+    <option value="Australia/Darwin">Australia/Darwin</option>
+    <option value="Australia/Hobart">Australia/Hobart</option>
+    <option value="Australia/Melbourne">Australia/Melbourne</option>
+    <option value="Australia/Perth">Australia/Perth</option>
+    <option value="Australia/Sydney">Australia/Sydney</option>
+    <option value="Europe/Amsterdam">Europe/Amsterdam</option>
+    <option value="Europe/Athens">Europe/Athens</option>
+    <option value="Europe/Belgrade">Europe/Belgrade</option>
+    <option value="Europe/Berlin">Europe/Berlin</option>
+    <option value="Europe/Brussels">Europe/Brussels</option>
+    <option value="Europe/Bucharest">Europe/Bucharest</option>
+    <option value="Europe/Copenhagen">Europe/Copenhagen</option>
+    <option value="Europe/Dublin">Europe/Dublin</option>
+    <option value="Europe/Helsinki">Europe/Helsinki</option>
+    <option value="Europe/Istanbul">Europe/Istanbul</option>
+    <option value="Europe/Kiev">Europe/Kiev</option>
+    <option value="Europe/Lisbon">Europe/Lisbon</option>
+    <option value="Europe/London">Europe/London</option>
+    <option value="Europe/Madrid">Europe/Madrid</option>
+    <option value="Europe/Moscow">Europe/Moscow</option>
+    <option value="Europe/Oslo">Europe/Oslo</option>
+    <option value="Europe/Paris">Europe/Paris</option>
+    <option value="Europe/Prague">Europe/Prague</option>
+    <option value="Europe/Rome">Europe/Rome</option>
+    <option value="Europe/Stockholm">Europe/Stockholm</option>
+    <option value="Europe/Warsaw">Europe/Warsaw</option>
+    <option value="Pacific/Auckland">Pacific/Auckland</option>
+    <option value="Pacific/Chatham">Pacific/Chatham</option>
+    <option value="Pacific/Fiji">Pacific/Fiji</option>
+    <option value="Pacific/Guam">Pacific/Guam</option>
+    <option value="Pacific/Honolulu">Pacific/Honolulu</option>
+    <option value="Pacific/Port_Moresby">Pacific/Port_Moresby</option>
+    <option value="Pacific/Tahiti">Pacific/Tahiti</option>
+    <option value="UTC">UTC</option>
+    <option value="Etc/GMT+1">Etc/GMT+1</option>
+    <option value="Etc/GMT-1">Etc/GMT-1</option>
+  </select>
+  <input style="margin-top: 1.75rem;" type="submit" class="primary-button" value="Save Settings">
+</form>
+
+<div id="savingMessage"></div>
+<script>
+let isSaving = false;
+let isAPMode = false;
+
+// Show/Hide Password toggle
+document.addEventListener("DOMContentLoaded", function () {
+  const password0Input = document.getElementById("password0");
+  const password1Input = document.getElementById("password1");
+  const password2Input = document.getElementById("password2");
+  const password3Input = document.getElementById("password3");
+  const password4Input = document.getElementById("password4");
+  const password5Input = document.getElementById("password5");
+  const password6Input = document.getElementById("password6");
+  const password7Input = document.getElementById("password7");
+  const password8Input = document.getElementById("password8");
+  const password9Input = document.getElementById("password9");
+  const toggleCheckbox = document.getElementById("togglePassword");
+  toggleCheckbox.addEventListener("change", function () {
+    if (this.checked) {
+      // Show password as text
+      password0Input.type = "text";
+      password1Input.type = "text";
+      password2Input.type = "text";
+      password3Input.type = "text";
+      password4Input.type = "text";
+      password5Input.type = "text";
+      password6Input.type = "text";
+      password7Input.type = "text";
+      password8Input.type = "text";
+      password9Input.type = "text";
+      // Only clear if it's the masked placeholder
+      if (password0Input.value === "********") { password0Input.value = ""; }
+      if (password1Input.value === "********") { password1Input.value = ""; }
+      if (password2Input.value === "********") { password2Input.value = ""; }
+      if (password3Input.value === "********") { password3Input.value = ""; }
+      if (password4Input.value === "********") { password4Input.value = ""; }
+      if (password5Input.value === "********") { password5Input.value = ""; }
+      if (password6Input.value === "********") { password6Input.value = ""; }
+      if (password7Input.value === "********") { password7Input.value = ""; }
+      if (password8Input.value === "********") { password8Input.value = ""; }
+      if (password9Input.value === "********") { password9Input.value = ""; }
+    } else {
+      // Hide password as dots
+      password0Input.type = "password";
+      password1Input.type = "password";
+      password2Input.type = "password";
+      password3Input.type = "password";
+      password4Input.type = "password";
+      password5Input.type = "password";
+      password6Input.type = "password";
+      password7Input.type = "password";
+      password8Input.type = "password";
+      password9Input.type = "password";
+    }
+  });
+});
+
+window.onbeforeunload = function () {
+  if (isSaving) {
+    return "Settings are being saved. Leaving now may interrupt the process.";
+  }
+};
+
+window.onload = function () {
+  fetch('/config.json')
+    .then(response => response.json())
+    .then(data => {
+      isAPMode = (data.mode === "ap");
+      document.getElementById('ssid0').value = data.ssids[0] || '';
+      document.getElementById('ssid1').value = data.ssids[1] || '';
+      document.getElementById('ssid2').value = data.ssids[2] || '';
+      document.getElementById('ssid3').value = data.ssids[3] || '';
+      document.getElementById('ssid4').value = data.ssids[4] || '';
+      document.getElementById('ssid5').value = data.ssids[5] || '';
+      document.getElementById('ssid6').value = data.ssids[6] || '';
+      document.getElementById('ssid7').value = data.ssids[7] || '';
+      document.getElementById('ssid8').value = data.ssids[8] || '';
+      document.getElementById('ssid9').value = data.ssids[9] || '';
+      document.getElementById('password0').value = data.passwords[0] || '';
+      document.getElementById('password1').value = data.passwords[1] || '';
+      document.getElementById('password2').value = data.passwords[2] || '';
+      document.getElementById('password3').value = data.passwords[3] || '';
+      document.getElementById('password4').value = data.passwords[4] || '';
+      document.getElementById('password5').value = data.passwords[5] || '';
+      document.getElementById('password6').value = data.passwords[6] || '';
+      document.getElementById('password7').value = data.passwords[7] || '';
+      document.getElementById('password8').value = data.passwords[8] || '';
+      document.getElementById('password9').value = data.passwords[9] || '';
+      document.getElementById('brightnessSlider').value = typeof data.brightness !== "undefined" ? data.brightness : 10;
+      document.getElementById('brightnessValue').textContent = document.getElementById('brightnessSlider').value;
+      document.getElementById('flipDisplay').checked = !!data.flipDisplay;
+      document.getElementById('ntpServer1').value = data.ntpServer1 || "";
+      document.getElementById('ntpServer2').value = data.ntpServer2 || "";
+      document.getElementById('mdns').value = data.mdns || "";
+
+      // --- Populate Countupdown Fields ---
+      if (data.countupdown && data.countupdown.targetTimestamp) {
+          // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
+          const targetDate = new Date(data.countupdown.targetTimestamp * 1000);
+          const year = targetDate.getUTCFullYear();
+          // Month is 0-indexed in JS, so add 1
+          const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
+          const day = targetDate.getUTCDate().toString().padStart(2, '0');
+          const hours = targetDate.getUTCHours().toString().padStart(2, '0');
+          const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
+          const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
+
+          document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
+          document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
+      } else {
+          // Clear fields if no target timestamp is set
+          document.getElementById('countupdownDate').value = '';
+          document.getElementById('countupdownTime').value = '';
+      }
+      // --- END Countupdown ---
+
+      // Auto-detect browser's timezone if not set in config
+      if (!data.timeZone) {
+        try {
+          const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          if (
+            tz &&
+            document.getElementById('timeZone').querySelector(`[value="${tz}"]`)
+          ) {
+            document.getElementById('timeZone').value = tz;
+          } else {
+            document.getElementById('timeZone').value = '';
+          }
+        } catch (e) {
+          document.getElementById('timeZone').value = '';
+        }
+      } else {
+        document.getElementById('timeZone').value = data.timeZone;
+      }
+    })
+    .catch(err => {
+      console.error('Failed to load config:', err);
+      showSavingModal("");
+      updateSavingModal("⚠️ Failed to load configuration.", false);
+
+      // Show appropriate button for load error
+      removeReloadButton();
+      removeRestoreButton();
+      const errorMsg = (err.message || "").toLowerCase();
+      if (
+        errorMsg.includes("config corrupted") ||
+        errorMsg.includes("failed to write config") ||
+        errorMsg.includes("restore")
+      ) {
+        ensureRestoreButton();
+      } else {
+        ensureReloadButton();
+      }
+    });
+  document.querySelector('html').style.height = 'unset';       
+  document.body.classList.add('loaded');     
+};
+
+async function submitConfig(event) {
+  event.preventDefault();
+  isSaving = true;
+
+  const form = document.getElementById('configForm');
+  const formData = new FormData(form);
+
+  // Advanced: ensure correct values are set for advanced fields
+  formData.set('brightness', document.getElementById('brightnessSlider').value);
+  formData.set('flipDisplay', document.getElementById('flipDisplay').checked ? 'on' : '');
+
+  const params = new URLSearchParams();
+  for (const pair of formData.entries()) {
+    params.append(pair[0], pair[1]);
+  }
+
+  showSavingModal("Saving...");
+
+  // Check AP mode status
+  let isAPMode = false;
+  try {
+    const apStatusResponse = await fetch('/ap_status');
+    const apStatusData = await apStatusResponse.json();
+    isAPMode = apStatusData.isAP;
+  } catch (error) {
+    console.error("Error fetching AP status:", error);
+    // Handle error appropriately (e.g., assume not in AP mode)
+  }
+
+  fetch('/save', {
+    method: 'POST',
+    body: params
+  })
+  .then(response => {
+    if (!response.ok) {
+      return response.json().then(json => {
+        throw new Error(`Server error ${response.status}: ${json.error}`);
+      });
+    }
+    return response.json();
+  })
+  .then(json => {
+    isSaving = false;
+    removeReloadButton();
+    removeRestoreButton();
+    if (isAPMode) {
+      updateSavingModal("✅ Settings saved successfully!<br><br>Rebooting the device now... ", false);
+      setTimeout(() => {        
+        document.getElementById('configForm').style.display = 'none';
+        document.querySelector('.footer').style.display = 'none';
+        document.querySelector('html').style.height = '100vh';
+        document.body.style.height = '100vh';
+        document.getElementById('configForm').style.display = 'none';
+        updateSavingModal("✅ All done!<br>You can now close this tab safely.<br><br>Your device is now rebooting and connecting to your Wi-Fi. Its new IP address will appear on the display for future access.", false);
+      }, 5000);
+      return;
+
+    } else {
+      updateSavingModal("✅ Configuration saved successfully.<br><br>Device will reboot", false);
+      setTimeout(() => location.href = location.href.split('#')[0], 3000);
+    }
+  })
+  .catch(err => {
+    isSaving = false;
+
+    if (isAPMode && err.message.includes("Failed to fetch")) {
+      console.warn("Expected disconnect in AP mode after reboot.");
+      showSavingModal("");
+      updateSavingModal("✅ Settings saved successfully!<br><br>Rebooting the device now... ", false);
+      setTimeout(() => {
+        document.getElementById('configForm').style.display = 'none'; 
+        updateSavingModal("✅ All done!<br>You can now close this tab safely.<br><br>Your device is now rebooting and connecting to your Wi-Fi. Its new IP address will appear on the display for future access.", false);
+      }, 5000);
+      removeReloadButton();
+      removeRestoreButton();
+      return;
+    }
+
+    console.error('Save error:', err);
+    let friendlyMessage = "⚠️ Something went wrong while saving the configuration.";
+    if (err.message.includes("Failed to fetch")) {
+      friendlyMessage = "⚠️ Cannot connect to the device.<br>Is it powered on and connected?";
+    }
+
+    updateSavingModal(`${friendlyMessage}<br><br>Details: ${err.message}`, false);
+
+    // Show only one action button, based on error content
+    removeReloadButton();
+    removeRestoreButton();
+    const errorMsg = (err.message || "").toLowerCase();
+    if (
+      errorMsg.includes("config corrupted") ||
+      errorMsg.includes("failed to write config") ||
+      errorMsg.includes("restore")
+    ) {
+      ensureRestoreButton();
+    } else {
+      ensureReloadButton();
+    }
+  });
+}
+
+function showSavingModal(message) {
+  let modal = document.getElementById('savingModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'savingModal';
+    modal.innerHTML = `
+      <div id="savingModalContent">
+        <div class="spinner"></div>
+        <div id="savingModalText">${message}</div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  } else {
+    document.getElementById('savingModalText').innerHTML = message;
+    document.querySelector('#savingModal .spinner').style.display = 'block';
+  }
+  modal.style.display = 'flex';
+  document.body.classList.add('modal-open');
+}
+
+function updateSavingModal(message, showSpinner = false) {
+  let modalText = document.getElementById('savingModalText');
+  modalText.innerHTML = message;
+  document.querySelector('#savingModal .spinner').style.display = showSpinner ? 'block' : 'none';
+
+  // Remove reload/restore buttons if no longer needed
+  if (message.includes("saved successfully") || message.includes("Backup restored") || message.includes("All done!")) {
+    removeReloadButton();
+    removeRestoreButton();
+  }
+}
+
+function ensureReloadButton(options = {}) {
+  let modalContent = document.getElementById('savingModalContent');
+  if (!modalContent) return;
+  let btn = document.getElementById('reloadButton');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'reloadButton';
+    btn.className = 'primary-button';
+    btn.style.display = 'inline-block';
+    btn.style.margin = '1rem 0.5rem 0 0';
+    modalContent.appendChild(btn);
+  }
+  btn.textContent = options.text || "Reload Page";
+  btn.onclick = options.onClick || (() => location.reload());
+  btn.style.display = 'inline-block';
+  return btn;
+}
+
+function ensureRestoreButton(options = {}) {
+  let modalContent = document.getElementById('savingModalContent');
+  if (!modalContent) return;
+  let btn = document.getElementById('restoreButton');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'restoreButton';
+    btn.className = 'primary-button';
+    btn.style.display = 'inline-block';
+    btn.style.margin = '1rem 0 0 0.5rem';
+    modalContent.appendChild(btn);
+  }
+  btn.textContent = options.text || "Restore Backup";
+  btn.onclick = options.onClick || restoreBackupConfig;
+  btn.style.display = 'inline-block';
+  return btn;
+}
+
+function removeReloadButton() {
+  let btn = document.getElementById('reloadButton');
+  if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
+}
+function removeRestoreButton() {
+  let btn = document.getElementById('restoreButton');
+  if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
+}
+
+function restoreBackupConfig() {
+  showSavingModal("Restoring backup...");
+  removeReloadButton();
+  removeRestoreButton();
+
+  fetch('/restore', { method: 'POST' })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error("Server returned an error");
+      }
+      return response.json();
+    })
+    .then(data => {
+      updateSavingModal("✅ Backup restored! Device will now reboot.");
+      setTimeout(() => location.reload(), 1500);
+    })
+    .catch(err => {
+      console.error("Restore error:", err);
+      updateSavingModal(`❌ Failed to restore backup: ${err.message}`, false);
+
+      // Show only one button, for backup restore failures show reload.
+      removeReloadButton();
+      removeRestoreButton();
+      ensureReloadButton();
+    });
+}
+
+function hideSavingModal() {
+  const modal = document.getElementById('savingModal');
+  if (modal) {
+    modal.style.display = 'none';
+    document.body.classList.remove('modal-open');
+  }
+}
+
+let brightnessDebounceTimeout = null;
+
+function setBrightnessLive(val) {
+  // Cancel the previous timeout if it exists
+  if (brightnessDebounceTimeout) {
+    clearTimeout(brightnessDebounceTimeout);
+  }
+  // Set a new timeout
+  brightnessDebounceTimeout = setTimeout(() => {
+    fetch('/set_brightness', {
+      method: 'POST',
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "value=" + encodeURIComponent(val)
+    })
+    .then(res => res.json())
+    .catch(e => {}); // Optionally handle errors
+  }, 150); // 150ms debounce, adjust as needed
+}
+
+function setFlipDisplay(val) {
+  fetch('/set_flip', {
+    method: 'POST',
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "value=" + (val ? 1 : 0)
+  });
+}
+</script>
+</body>
+</html>
