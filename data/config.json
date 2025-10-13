@@ -2,6 +2,8 @@
   "mdns": "chronoclock",
   "apSsid": "",
   "apPassword": "",
+  "ssids": ["","","","","","","","","",""],
+  "passwords": ["","","","","","","","","",""],
   "timeZone": "",
   "brightness": 1,
   "flipDisplay": true,

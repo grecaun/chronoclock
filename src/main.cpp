@@ -1,18 +1,17 @@
 #include <Arduino.h>
+#if ESPVERS == 32
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include <AsyncTCP.h>
+#include <ESPmDNS.h>
+#endif
+#if ESPVERS == 8266
+#include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
+#endif
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <MD_Parola.h>
-#include <MD_MAX72xx.h>
-#include <SPI.h>
 #include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
-#include <esp_sntp.h>
-#include <time.h>
-#include <WiFiClientSecure.h>
-#include <ESPmDNS.h>
 #include "RTClib.h"
 #include "mfactoryfont.h"   // Custom font
 #include "tz_lookup.h"      // Timezone lookup
@@ -191,10 +190,6 @@ String saveConfig() {
 
     JsonObject countupdownObj = doc["countupdown"].to<JsonObject>();
     countupdownObj["targetTimestamp"] = countupdownTargetTimestamp;
-
-    size_t total = LittleFS.totalBytes();
-    size_t used = LittleFS.usedBytes();
-    Serial.printf("[SAVE] LittleFS total bytes: %llu, used bytes: %llu\n", LittleFS.totalBytes(), LittleFS.usedBytes());
 
     if (LittleFS.exists("/config.json")) {
       Serial.println(F("[SAVE] Renaming /config.json to /config.bak"));
@@ -447,7 +442,7 @@ void setupWebServer() {
 
     String countupdownDateStr = "";
     String countupdownTimeStr = "";
-    for (int i = 0; i < request->params(); i++) {
+    for (u_int i = 0; i < request->params(); i++) {
       const AsyncWebParameter *p = request->getParam(i);
       String n = p->name();
       String v = p->value();
@@ -488,7 +483,7 @@ void setupWebServer() {
               || n == "ssid8"
               || n == "ssid9") {
         int num = n.substring(4,5).toInt();
-        Serial.printf("[WEBSERVER] SSID #%d change: %s\n", num+1, v);
+        Serial.printf("[WEBSERVER] SSID #%d change: %s\n", num+1, v.c_str());
         if (String(ssids[num]) != v) {
           restartWifi = true;
         }
@@ -528,7 +523,7 @@ void setupWebServer() {
         Serial.println("[WEBSERVER] Error converting countupdown date/time to timestamp.");
         countupdownTargetTimestamp = 0;
       } else {
-        Serial.printf("[WEBSERVER] Converted countupdown target: %s %s -> %lu\n", countupdownDateStr.c_str(), countupdownTimeStr.c_str(), countupdownTargetTimestamp);
+        Serial.printf("[WEBSERVER] Converted countupdown target: %s %s -> %lld\n", countupdownDateStr.c_str(), countupdownTimeStr.c_str(), countupdownTargetTimestamp);
       }
     }
 
@@ -707,7 +702,7 @@ void setupWebServer() {
         Serial.println("[WEBSERVER] Error converting countupdown date/time to timestamp.");
         newTargetTimestamp = 0;
       } else {
-        Serial.printf("[WEBSERVER] Converted countupdown target: %s -> %lu\n", DateTimeStr.c_str(), newTargetTimestamp);
+        Serial.printf("[WEBSERVER] Converted countupdown target: %s -> %lld\n", DateTimeStr.c_str(), newTargetTimestamp);
       }
       countupdownTargetTimestamp = newTargetTimestamp;
       String msg = saveConfig();
@@ -773,7 +768,7 @@ void setupWebServer() {
   server.on("/get_time", HTTP_GET, [](AsyncWebServerRequest *request){
     DateTime dtNow = rtc.now();
     char dateTimeJson[48];
-    sprintf(dateTimeJson, "{\"time\":\"%04d-%02d-%02d %02d:%02d:%02d\"}", dtNow.year(), dtNow.month(), dtNow.day(), dtNow.hour(), dtNow.minute(), dtNow.second());
+    snprintf(dateTimeJson, sizeof(dateTimeJson), "{\"time\":\"%04d-%02d-%02d %02d:%02d:%02d\"}", dtNow.year(), dtNow.month(), dtNow.day(), dtNow.hour(), dtNow.minute(), dtNow.second());
     request->send(200, "application/json", dateTimeJson);
   });
 
@@ -814,7 +809,7 @@ void setupWebServer() {
     }
     DateTime dtNow = rtc.now();
     char dateTimeJson[48];
-    sprintf(dateTimeJson, "{\"time\":\"%04d-%02d-%02d %02d:%02d:%02d\"}", dtNow.hour(), dtNow.minute(), dtNow.second());
+    snprintf(dateTimeJson, sizeof(dateTimeJson), "{\"time\":\"%04u-%02u-%02u %02u:%02u:%02u\"}", dtNow.year(), dtNow.month(), dtNow.day(), dtNow.hour(), dtNow.minute(), dtNow.second());
     request->send(200, "application/json", dateTimeJson);
   });
 
@@ -848,7 +843,11 @@ void setup() {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
+#if ESPVERS == 8266
+  if (!LittleFS.begin()) {
+#else
   if (!LittleFS.begin(true)) {
+#endif
     Serial.println(F("[ERROR] LittleFS mount failed in setup! Halting."));
     while (true) {
       delay(100);
@@ -936,22 +935,18 @@ void loop() {
 
   DateTime dtNow = rtc.now();
   if (countupdownTargetTimestamp > 0) { // --- COUNTUPDOWN Display Mode ---
-    static int countupdownSegment = 0;
-    static unsigned long segmentStartTime = 0;
-    const unsigned long SEGMENT_DISPLAY_DURATION = 1500;  // 1.5 seconds for each static segment
-
     long timeSeconds = countupdownTargetTimestamp - dtNow.unixtime();
     if (timeSeconds < 0) {
       timeSeconds = timeSeconds * -1;
     }
 
-    long hours = timeSeconds / 3600;
-    long minutes = (timeSeconds % 3600) / 60;
-    long seconds = timeSeconds % 60;
+    uint8_t hours = timeSeconds / 3600;
+    uint8_t minutes = (timeSeconds % 3600) / 60;
+    uint8_t seconds = timeSeconds % 60;
 
     // Format the full string
     char timeWithSeconds[12];
-    sprintf(timeWithSeconds, "%d:%02d:%02d", hours, minutes, seconds);
+    snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%d:%02d:%02d", hours, minutes, seconds);
 
     // keep spacing logic the same ---
     char timeSpacedStr[24];
@@ -977,7 +972,7 @@ void loop() {
   else { // --- CLOCK Display Mode ---
     // build base HH:MM:SS first ---
     char timeWithSeconds[12];
-    sprintf(timeWithSeconds, "%02d:%02d:%02d", dtNow.hour(), dtNow.minute(), dtNow.second());
+    snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%02d:%02d:%02d", dtNow.hour(), dtNow.minute(), dtNow.second());
   
     // keep spacing logic the same ---
     char timeSpacedStr[24];
