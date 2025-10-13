@@ -1,10 +1,12 @@
 #include <Arduino.h>
 #if ESPVERS == 32
 #include <WiFi.h>
+#include <WifiMulti.h>
 #include <ESPmDNS.h>
 #endif
 #if ESPVERS == 8266
 #include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
 #include <ESP8266mDNS.h>
 #endif
 #include <LittleFS.h>
@@ -25,6 +27,13 @@ const char *DEFAULT_AP_PASSWORD = "chrono157";
 MD_Parola P = MD_Parola(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, MAX_DEVICES);
 RTC_DS3231 rtc;
 AsyncWebServer server(80);
+
+#if ESPVERS == 8266
+ESP8266WiFiMulti multi;
+#else
+WiFiMulti multi;
+#endif
+const uint32_t wifiTimeoutMs = 10000; // 10 second timeout
 
 // Settings
 char mdns[64]          = "";
@@ -248,52 +257,37 @@ String saveConfig() {
 // -----------------------------------------------------------------------------
 // WiFi Setup
 // -----------------------------------------------------------------------------
-
 void connectWiFi() {
   Serial.println(F("[WIFI] Connecting to WiFi..."));
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true);
+#if ESPVERS == 8266
+  multi = ESP8266WiFiMulti();
+#else
+  multi = WiFiMulti();
+#endif
   dnsServer.stop();
   delay(100);
   
   for (int i=0;i<10;i++) {
     if (strlen(ssids[i]) > 0) {
-      // If credentials exist, attempt STA connection
-      WiFi.begin(ssids[i], passwords[i]);
-      unsigned long startAttemptTime = millis();
-    
-      const unsigned long timeout = 10000; // 10 second timeout
-      while (true) {
-        unsigned long now = millis();
-        // Connection successful
-        if (WiFi.status() == WL_CONNECTED) {
-          Serial.println("[WIFI] Connected: " + WiFi.localIP().toString());
-          isAPMode = false;
-          WiFiMode_t mode = WiFi.getMode();
-          Serial.printf("[WIFI] WiFi mode after STA connection: %s\n",
-                        mode == WIFI_OFF ? "OFF"
-                      : mode == WIFI_STA    ? "STA ONLY"
-                      : mode == WIFI_AP     ? "AP ONLY"
-                      : mode == WIFI_AP_STA ? "AP + STA (Error!)"
-                                            : "UNKNOWN");
-          break; // Exit the connection loop
-        // Connection timed out...
-        } else if (now - startAttemptTime >= timeout) {
-          break; // Exit the connection loop
-        }
-        delay(1);
-      }
-      // Break loop when connected to a network.
-      if (WiFi.status() == WL_CONNECTED) {
-        break;
-      }
-    } // END ssid length check
+      multi.addAP(ssids[i],passwords[i]);
+    }
   }
 
-  // Didn't connect to any network.
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println(F("[WIFI] Unable to connect to a Wifi network. Starting AP mode..."));
+  if (multi.run() == WL_CONNECTED) {
+    Serial.println("[WIFI] Connected: " + WiFi.localIP().toString());
+    isAPMode = false;
+    WiFiMode_t mode = WiFi.getMode();
+    Serial.printf("[WIFI] WiFi mode after STA connection: %s\n",
+                  mode == WIFI_OFF ? "OFF"
+                : mode == WIFI_STA    ? "STA ONLY"
+                : mode == WIFI_AP     ? "AP ONLY"
+                : mode == WIFI_AP_STA ? "AP + STA (Error!)"
+                                      : "UNKNOWN");
+  } else {
+    Serial.println(F("[WIFI] Unable to connect to a WiFi network. Starting AP mode..."));
     WiFi.mode(WIFI_AP);
     if (strlen(apSsid) > 0) {
       if (strlen(apPassword) >= 8) {
@@ -337,30 +331,18 @@ void startNTPSync(bool resetTime, int retryCount = 0) {
     return;
   }
   Serial.println(F("[TIME] Starting NTP sync"));
-  bool serverOk = false;
-  IPAddress resolvedIP;
-
-  // Try first server if it's not empty
-  if (strlen(ntpServer1) > 0 && WiFi.hostByName(ntpServer1, resolvedIP) == 1) {
-    serverOk = true;
-  }
-  // Try second server if first failed
-  else if (strlen(ntpServer2) > 0 && WiFi.hostByName(ntpServer2, resolvedIP) == 1) {
-    serverOk = true;
-  }
 
   if (resetTime) {
+    Serial.println(F("Resetting time."));
     struct timeval now = { .tv_sec = 0 };
     settimeofday(&now, NULL);
   }
   ntpState = NTP_SYNCING;
   ntpStartTime = millis();
-  if (serverOk) {
-    configTime(0, 0, ntpServer1, ntpServer2);
-    setenv("TZ", ianaToPosix(timeZone), 1);
-    tzset();
-    ntpRetryCount = retryCount + 1;
-  }
+  configTime(0, 0, ntpServer1, ntpServer2);
+  setenv("TZ", ianaToPosix(timeZone), 1);
+  tzset();
+  ntpRetryCount = retryCount + 1;
 }
 
 // -----------------------------------------------------------------------------
@@ -829,7 +811,7 @@ void setupWebServer() {
 // -----------------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(10);
   Serial.println(F("[SETUP] Starting setup..."));
 
   // Check if RTC was found.
@@ -887,6 +869,10 @@ void setup() {
 void loop() {
   if (isAPMode) {
     dnsServer.processNextRequest();
+  } else {
+    if (multi.run(wifiTimeoutMs) != WL_CONNECTED) {
+      connectWiFi();
+    }
   }
 
   static bool colonVisible = true;
