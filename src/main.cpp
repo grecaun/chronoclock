@@ -19,9 +19,11 @@
 #include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
 #include <time.h>
+#include <ElegantOTA.h>
 #include "RTClib.h"
 #include "mfactoryfont.h"   // Custom font
 #include "tz_lookup.h"      // Timezone lookup
+#include "auth.h"           // Auth information
 
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_DEVICES   4
@@ -98,8 +100,9 @@ enum NtpState {
   NTP_FAILED
 };
 NtpState            ntpState               = NTP_IDLE;
-unsigned long       ntpStartTime           = 0;
-const int           ntpTimeout             = 10000;  // 10 seconds
+unsigned long       ntpLastTime            = 0;
+const int           ntpTimeout             = 10000;   // 10 seconds
+const int           ntpRefreshTime         = 3600000; // Auto refresh NTP sync every hour with no RTC
 const int           maxNtpRetries          = 3;
 int                 ntpRetryCount          = 0;
 
@@ -390,7 +393,7 @@ void startNTPSync(bool resetTime, int retryCount = 0) {
     settimeofday(&now, NULL);
   }
   ntpState = NTP_SYNCING;
-  ntpStartTime = millis();
+  ntpLastTime = millis();
   configTime(0, 0, ntpServer1, ntpServer2);
   setenv("TZ", ianaToPosix(timeZone), 1);
   tzset();
@@ -551,7 +554,6 @@ void setupWebServer() {
       }
     }
 
-    time_t countupdownTargetTimestamp = 0;
     if (countupdownDateStr.length() > 0 && countupdownTimeStr.length() > 0) {
       struct tm tm;
       tm.tm_year = countupdownDateStr.substring(0, 4).toInt() - 1900;
@@ -575,7 +577,7 @@ void setupWebServer() {
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
     } else {
-      Serial.println(F("[WEBSERVER] Config verification successful."));
+      Serial.println(F("[WEBSERVER] Config saved successful."));
       JsonDocument okDoc;
       okDoc[F("message")] = "Saved successfully.";
       String response;
@@ -730,7 +732,6 @@ void setupWebServer() {
 
     String DateTimeStr = request->getParam("DateTime", true)->value();
 
-    time_t newTargetTimestamp = 0;
     if (DateTimeStr.length() == 19) {
       struct tm tm;
       tm.tm_year = DateTimeStr.substring(0, 4).toInt() - 1900;
@@ -741,14 +742,13 @@ void setupWebServer() {
       tm.tm_sec = DateTimeStr.substring(17, 19).toInt();
       tm.tm_isdst = -1;
 
-      newTargetTimestamp = mktime(&tm);
-      if (newTargetTimestamp == (time_t)-1) {
+      countupdownTargetTimestamp = mktime(&tm);
+      if (countupdownTargetTimestamp == (time_t)-1) {
         Serial.println("[WEBSERVER] Error converting countupdown date/time to timestamp.");
-        newTargetTimestamp = 0;
+        countupdownTargetTimestamp = 0;
       } else {
-        Serial.printf("[WEBSERVER] Converted countupdown target: %s -> %lld\n", DateTimeStr.c_str(), newTargetTimestamp);
+        Serial.printf("[WEBSERVER] Converted countupdown target: %s -> %lld\n", DateTimeStr.c_str(), countupdownTargetTimestamp);
       }
-      countupdownTargetTimestamp = newTargetTimestamp;
       String msg = saveConfig();
       if (msg.length() > 0) {
         request->send(500, "application/json", msg);
@@ -917,6 +917,10 @@ void setup() {
   Serial.println(F("[SETUP] Setup complete"));
   printConfigToSerial();
   lastColonBlink = millis();
+
+  Serial.println(F("[SETUP] Starting ElegantOTA."));
+  ElegantOTA.setAuth(ELEGANT_USER, ELEGANT_PASS);
+  ElegantOTA.begin(&server);
 }
 
 void loop() {
@@ -968,6 +972,8 @@ void loop() {
       break;
   }
 
+  ElegantOTA.loop();
+
   static bool colonVisible = true;
   const unsigned long colonBlinkInterval = 800;
   if (millis() - lastColonBlink > colonBlinkInterval) {
@@ -977,39 +983,41 @@ void loop() {
 
   // --- NTP State Machine ---
   switch (ntpState) {
-    case NTP_IDLE: break;
-    case NTP_SYNCING:
-      {
+    case NTP_IDLE:
+    case NTP_SUCCESS: {
+        // If RTC doesn't work, attempt to refresh NTP sync every hour.
+        if (!rtcEnabled  && (ntpLastTime == 0 || curMillis > ntpLastTime + ntpRefreshTime)) {
+          startNTPSync(false);
+        }
+      }
+      break;
+    case NTP_SYNCING: {
         time_t lNow = time(nullptr);
         if (lNow > 1000) {  // NTP sync successful
           Serial.println(F("[TIME] NTP sync successful."));
           ntpState = NTP_SUCCESS;
-        } else if (millis() - ntpStartTime > ntpTimeout && ntpRetryCount < maxNtpRetries) {
+          Serial.println(F("[TIME] Setting timezone then adjusting RTC clock."));
+          setenv("TZ", ianaToPosix(timeZone), 1);
+          tzset();
+          if (rtcEnabled) {
+            time_t nowTime = time(nullptr);
+            struct tm timeInfo;
+            localtime_r(&nowTime, &timeInfo);
+            rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
+          }
+        } else if (curMillis - ntpLastTime > ntpTimeout && ntpRetryCount < maxNtpRetries) {
           Serial.println(F("[TIME] NTP sync failed."));
           ntpState = NTP_FAILED;
         } else if (ntpRetryCount >= maxNtpRetries) {
           ntpState = NTP_IDLE;
         }
-        break;
       }
-    case NTP_SUCCESS:
-      {
-        Serial.println(F("[TIME] Setting timezone then adjusting RTC clock."));
-        setenv("TZ", ianaToPosix(timeZone), 1);
-        tzset();
-        ntpState = NTP_IDLE;
-        time_t nowTime = time(nullptr);
-        struct tm timeInfo;
-        localtime_r(&nowTime, &timeInfo);
-        rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
-        break;
-      }
-    case NTP_FAILED:
-      {
+      break;
+    case NTP_FAILED: {
         startNTPSync(false, ntpRetryCount);
         Serial.println(F("[TIME] Retrying NTP sync..."));
-        break;
       }
+      break;
   }
 
   DateTime dtNow;

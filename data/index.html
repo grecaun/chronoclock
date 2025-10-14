@@ -58,7 +58,7 @@
   }
   form {
     display: flex; flex-direction: column;
-    max-width: 500px; margin: 0 auto;
+    max-width: 575px; margin: 0 auto;
     background: linear-gradient(120deg, rgba(45,65,90,0.72) 0%, rgba(53,133,183,0.38) 100%); 
     padding: 1.5rem;
     border-radius: 24px;
@@ -68,7 +68,7 @@
   label {
     font-size: 0.9rem; 
     display: block; 
-    margin-top: 0.75rem; 
+    margin-top: 0.2rem; 
   }
   input[type="text"], 
   input[type="time"],   
@@ -140,9 +140,30 @@
   .form-row.two-col { 
     flex-direction: column;
   }
+
   .form-row.two-col > div { 
     flex: 1;
   }
+
+  .form-row.three-col {
+    flex-direction: column;
+  }
+
+  .form-group > input[type="text"],
+  .form-group > input[type="password"] {
+    margin-bottom: 0.3rem;
+  }
+
+  .form-ssid-number {
+    text-align: center;
+    margin: auto 0px;
+    visibility: collapse;
+  }
+
+  .text-center-small {
+    text-align: center;
+  }
+
   .primary-button {
     background: linear-gradient(90deg, #3e99bc, #47add4 85%);
     color: white;
@@ -201,7 +222,8 @@
   .small{
     display: block;
     font-size: 0.8rem;
-    margin-top: 0.25rem;
+    margin-top: 0.45rem;
+    text-align: center;
   }
 
   select option {
@@ -213,14 +235,53 @@
     100% { transform: rotate(360deg); }
   }
 
-  @media (min-width: 361px) {
-    .form-row.two-col { 
-      flex-direction: row; 
-      gap: 1rem; }
+  @media (max-width: 449px) {
+    .form-row.three-col > div {
+      flex: 1;
+    }
 
-      #openWeatherCountry{
-        margin-top: 0;
-      }
+    .hidden-small {
+      visibility: collapse;
+      height: 0px;
+    }
+
+    .hidden-large {
+      visibility: visible;
+    }
+  }
+
+  @media (min-width: 450px) {
+    .form-row.two-col { 
+      flex-direction: row;
+      gap: 1rem;
+    }
+
+    .form-row.three-col {
+      flex-direction: row;
+      gap: 1rem;
+    }
+
+    .form-row.three-col > div {
+      width: 50%;
+    }
+    
+    .form-ssid-number {
+      width: 20px !important;
+      visibility: visible;
+    }
+
+    .hidden-small {
+      visibility: visible;
+    }
+
+    .hidden-large {
+      visibility: collapse;
+      height: 0px;
+    }
+
+    .text-center-small {
+      text-align: start;
+    }
   }
 
   /* Toggle Switch Styling for Flip Display */
@@ -248,10 +309,10 @@
   <div class="logo">
     <h1>ChronoClock</h1>
   </div>
-  <h2>WiFi Settings</h2>
+  <h2>Access Point Settings</h2>
   <div class="form-row two-col">
     <div class="form-group">
-      <label for="apSsid">AP SSID</label>
+      <label for="apSsid">SSID</label>
       <input type="text" id="apSsid" name="apSsid" />
     </div>
     <div class="form-group">
@@ -259,107 +320,128 @@
       <input type="password" id="apPassword" name="apPassword" placeholder="" />
     </div>
   </div>
-  <div class="form-row two-col">
+  <h2>WiFi Settings</h2>
+  <div class="form-row three-col hidden-small">
+    <div class="form-group form-ssid-number">
+    </div>
     <div class="form-group">
-      <label for="ssid0">SSID 1</label>
+      <label>SSID</label>
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+    </div>
+  </div>
+  <div class="form-row three-col">
+    <div class="form-group form-ssid-number">1</div>
+    <div class="form-group">
+      <label for="ssid0" class="hidden-large">SSID 1</label>
       <input type="text" id="ssid0" name="ssid0" />
     </div>
     <div class="form-group">
-      <label for="password0">Password</label>
+      <label for="password0" class="hidden-large">Password</label>
       <input type="password" id="password0" name="password0" placeholder="" />
     </div>
   </div>
-  <div class="form-row two-col">
+  <div class="form-row three-col">
+    <div class="form-group form-ssid-number">2</div>
     <div class="form-group">
-      <label for="ssid1">SSID 2</label>
+      <label for="ssid1" class="hidden-large">SSID 2</label>
       <input type="text" id="ssid1" name="ssid1" />
     </div>
     <div class="form-group">
-      <label for="password1">Password</label>
+      <label for="password1" class="hidden-large">Password</label>
       <input type="password" id="password1" name="password1" placeholder="" />
     </div>
   </div>
-  <div class="form-row two-col">
+  <div class="form-row three-col">
+    <div class="form-group form-ssid-number">3</div>
     <div class="form-group">
-      <label for="ssid2">SSID 3</label>
+      <label for="ssid2" class="hidden-large">SSID 3</label>
       <input type="text" id="ssid2" name="ssid2" />
     </div>
     <div class="form-group">
-      <label for="password2">Password</label>
+      <label for="password2" class="hidden-large">Password</label>
       <input type="password" id="password2" name="password2" placeholder="" />
     </div>
   </div>
-  <div class="form-row two-col">
+  <div class="form-row three-col">
+    <div class="form-group form-ssid-number">4</div>
     <div class="form-group">
-      <label for="ssid3">SSID 4</label>
+      <label for="ssid3" class="hidden-large">SSID 4</label>
       <input type="text" id="ssid3" name="ssid3" />
     </div>
     <div class="form-group">
-      <label for="password3">Password</label>
+      <label for="password3" class="hidden-large">Password</label>
       <input type="password" id="password3" name="password3" placeholder="" />
     </div>
   </div>
-  <div class="form-row two-col">
+  <div class="form-row three-col">
+    <div class="form-group form-ssid-number">5</div>
     <div class="form-group">
-      <label for="ssid4">SSID 5</label>
+      <label for="ssid4" class="hidden-large">SSID 5</label>
       <input type="text" id="ssid4" name="ssid4" />
     </div>
     <div class="form-group">
-      <label for="password4">Password</label>
+      <label for="password4" class="hidden-large">Password</label>
       <input type="password" id="password4" name="password4" placeholder="" />
     </div>
   </div>
-  <div class="form-row two-col">
+  <div class="form-row three-col">
+    <div class="form-group form-ssid-number">6</div>
     <div class="form-group">
-      <label for="ssid5">SSID 6</label>
+      <label for="ssid5" class="hidden-large">SSID 6</label>
       <input type="text" id="ssid5" name="ssid5" />
     </div>
     <div class="form-group">
-      <label for="password5">Password</label>
+      <label for="password5" class="hidden-large">Password</label>
       <input type="password" id="password5" name="password5" placeholder="" />
     </div>
   </div>
-  <div class="form-row two-col">
+  <div class="form-row three-col">
+    <div class="form-group form-ssid-number">7</div>
     <div class="form-group">
-      <label for="ssid6">SSID 7</label>
+      <label for="ssid6" class="hidden-large">SSID 7</label>
       <input type="text" id="ssid6" name="ssid6" />
     </div>
     <div class="form-group">
-      <label for="password6">Password</label>
+      <label for="password6" class="hidden-large">Password</label>
       <input type="password" id="password6" name="password6" placeholder="" />
     </div>
   </div>
-  <div class="form-row two-col">
+  <div class="form-row three-col">
+    <div class="form-group form-ssid-number">8</div>
     <div class="form-group">
-      <label for="ssid7">SSID 8</label>
+      <label for="ssid7" class="hidden-large">SSID 8</label>
       <input type="text" id="ssid7" name="ssid7" />
     </div>
     <div class="form-group">
-      <label for="password7">Password</label>
+      <label for="password7" class="hidden-large">Password</label>
       <input type="password" id="password7" name="password7" placeholder="" />
     </div>
   </div>
-  <div class="form-row two-col">
+  <div class="form-row three-col">
+    <div class="form-group form-ssid-number">9</div>
     <div class="form-group">
-      <label for="ssid8">SSID 9</label>
+      <label for="ssid8" class="hidden-large">SSID 9</label>
       <input type="text" id="ssid8" name="ssid8" />
     </div>
     <div class="form-group">
-      <label for="password8">Password</label>
+      <label for="password8" class="hidden-large">Password</label>
       <input type="password" id="password8" name="password8" placeholder="" />
     </div>
   </div>
-  <div class="form-row two-col">
+  <div class="form-row three-col">
+    <div class="form-group form-ssid-number">10</div>
     <div class="form-group">
-      <label for="ssid9">SSID 10</label>
+      <label for="ssid9" class="hidden-large">SSID 10</label>
       <input type="text" id="ssid9" name="ssid9" />
     </div>
     <div class="form-group">
-      <label for="password9">Password</label>
+      <label for="password9" class="hidden-large">Password</label>
       <input type="password" id="password9" name="password9" placeholder="" />
     </div>
   </div>
-  <label class="small"><input type="checkbox" id="togglePassword" style="margin-right: 0.3rem;" />Show Password</label>
+  <label class="small"><input type="checkbox" id="togglePassword"/>Show Password(s)</label>
   <label for="mdns">mDNS</label>
   <input type="text" id="mdns" name="mdns" />
   <h2>Countup/Countdown Settings</h2>
@@ -487,6 +569,7 @@ let isAPMode = false;
 
 // Show/Hide Password toggle
 document.addEventListener("DOMContentLoaded", function () {
+  const apPasswordInput = document.getElementById("apPassword");
   const password0Input = document.getElementById("password0");
   const password1Input = document.getElementById("password1");
   const password2Input = document.getElementById("password2");
@@ -501,6 +584,7 @@ document.addEventListener("DOMContentLoaded", function () {
   toggleCheckbox.addEventListener("change", function () {
     if (this.checked) {
       // Show password as text
+      apPasswordInput.type = "text";
       password0Input.type = "text";
       password1Input.type = "text";
       password2Input.type = "text";
@@ -512,6 +596,7 @@ document.addEventListener("DOMContentLoaded", function () {
       password8Input.type = "text";
       password9Input.type = "text";
       // Only clear if it's the masked placeholder
+      if (apPasswordInput.value === "********") { apPasswordInput.value = ""; }
       if (password0Input.value === "********") { password0Input.value = ""; }
       if (password1Input.value === "********") { password1Input.value = ""; }
       if (password2Input.value === "********") { password2Input.value = ""; }
@@ -524,6 +609,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (password9Input.value === "********") { password9Input.value = ""; }
     } else {
       // Hide password as dots
+      apPasswordInput.type = "password";
       password0Input.type = "password";
       password1Input.type = "password";
       password2Input.type = "password";
