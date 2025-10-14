@@ -1,19 +1,24 @@
 #include <Arduino.h>
 #if ESPVERS == 32
 #include <WiFi.h>
-#include <WifiMulti.h>
 #include <ESPmDNS.h>
+#include <AsyncTCP.h>
+#include <esp_sntp.h>
 #endif
 #if ESPVERS == 8266
 #include <ESP8266WiFi.h>
-#include <ESP8266WiFiMulti.h>
 #include <ESP8266mDNS.h>
+#include <ESPAsyncTCP.h>
+#include <sntp.h>
 #endif
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <MD_Parola.h>
+#include <MD_MAX72xx.h>
+#include <SPI.h>
 #include <ESPAsyncWebServer.h>
 #include <DNSServer.h>
+#include <time.h>
 #include "RTClib.h"
 #include "mfactoryfont.h"   // Custom font
 #include "tz_lookup.h"      // Timezone lookup
@@ -28,12 +33,41 @@ MD_Parola P = MD_Parola(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, MAX_DEVICES);
 RTC_DS3231 rtc;
 AsyncWebServer server(80);
 
-#if ESPVERS == 8266
-ESP8266WiFiMulti multi;
-#else
-WiFiMulti multi;
+const uint32_t wifiTimeout = 10000;  // 10 second timeout
+const uint32_t apTimeout   = 300000; // 5 minutes
+enum ChronoWiFiState {
+  WIFI_CONNECTED,
+  WIFI_WORKING,
+  WIFI_DISCONNECTED,
+  WIFI_APMODE
+};
+ChronoWiFiState wifiState    = WIFI_DISCONNECTED;
+uint8_t         wifiNetNum   = 0;
+uint32_t        wifiLastTime = 0;
+
+#if ESPVERS == 32
+void WiFiStationGotIP(WiFiEvent_t event, WiFiEventInfo_t info) {
+  Serial.println(F("[WIFI] Connection successful."));
+  wifiState = WIFI_CONNECTED;
+  WiFiMode_t mode = WiFi.getMode();
+  Serial.printf("[WIFI] WiFi mode after STA connection: %s\n",
+                mode == WIFI_OFF    ? "OFF"
+              : mode == WIFI_STA    ? "STA ONLY"
+              : mode == WIFI_AP     ? "AP ONLY"
+              : mode == WIFI_AP_STA ? "AP + STA (Error!)"
+                                    : "UNKNOWN");
+    Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
+}
+
+void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
+  Serial.println("[WIFI] Network has disconnected.");
+  wifiLastTime = millis();
+  wifiState = WIFI_DISCONNECTED;
+}
 #endif
-const uint32_t wifiTimeoutMs = 10000; // 10 second timeout
+#if ESPVERS == 8266
+WiFiEventHandler WiFiStationGotIP, WiFiStationDisconnected;
+#endif
 
 // Settings
 char mdns[64]          = "";
@@ -48,7 +82,7 @@ char ntpServer1[128]   = "pool.ntp.org";
 char ntpServer2[128]   = "time.nist.gov";
 
 // Globals
-bool          isAPMode                   = false;
+bool          rtcEnabled                 = false;
 unsigned long lastColonBlink             = 0;
 time_t        countupdownTargetTimestamp = 0;  // Unix timestamp
 
@@ -259,60 +293,49 @@ String saveConfig() {
 // -----------------------------------------------------------------------------
 void connectWiFi() {
   Serial.println(F("[WIFI] Connecting to WiFi..."));
-
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true);
-#if ESPVERS == 8266
-  multi = ESP8266WiFiMulti();
-#else
-  multi = WiFiMulti();
-#endif
   dnsServer.stop();
+  wifiLastTime = millis();
+  wifiState = WIFI_WORKING;
   delay(100);
   
-  for (int i=0;i<10;i++) {
-    if (strlen(ssids[i]) > 0) {
-      multi.addAP(ssids[i],passwords[i]);
-    }
-  }
-
-  if (multi.run() == WL_CONNECTED) {
-    Serial.println("[WIFI] Connected: " + WiFi.localIP().toString());
-    isAPMode = false;
+#if ESPVERS == 32
+  WiFi.onEvent(WiFiStationGotIP, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
+  WiFi.onEvent(WiFiStationDisconnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+#endif
+#if ESPVERS == 8266
+  WiFiStationGotIP = WiFi.onStationModeGotIP([](const WiFiEventStationModeGotIP& event) {
+    Serial.println(F("[WIFI] Connection successful."));
+    wifiState = WIFI_CONNECTED;
     WiFiMode_t mode = WiFi.getMode();
     Serial.printf("[WIFI] WiFi mode after STA connection: %s\n",
-                  mode == WIFI_OFF ? "OFF"
+                  mode == WIFI_OFF    ? "OFF"
                 : mode == WIFI_STA    ? "STA ONLY"
                 : mode == WIFI_AP     ? "AP ONLY"
                 : mode == WIFI_AP_STA ? "AP + STA (Error!)"
                                       : "UNKNOWN");
-  } else {
-    Serial.println(F("[WIFI] Unable to connect to a WiFi network. Starting AP mode..."));
-    WiFi.mode(WIFI_AP);
-    if (strlen(apSsid) > 0) {
-      if (strlen(apPassword) >= 8) {
-        WiFi.softAP(apSsid, apPassword);
-      } else {
-        WiFi.softAP(apSsid, NULL);
-      }
-    } else if (strlen(DEFAULT_AP_PASSWORD) >= 8) {
-      WiFi.softAP(DEFAULT_AP_SSID, DEFAULT_AP_PASSWORD);
-    } else {
-      WiFi.softAP(DEFAULT_AP_SSID, NULL);
+    Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
+  });
+
+  WiFiStationDisconnected = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event) {
+    Serial.println("[WIFI] Network has disconnected.");
+    wifiLastTime = millis();
+    wifiState = WIFI_DISCONNECTED;
+  });
+#endif
+
+  for (int i=0;i<10;i++) {
+    wifiNetNum = i;
+    if (strlen(ssids[i]) > 0) {
+      Serial.printf("[WIFI] Attempting to connect to: %s\n", ssids[i]);
+      WiFi.begin(ssids[i],passwords[i]);
+      wifiLastTime = millis();
+      return;
     }
-    Serial.print(F("[WIFI] AP IP address: "));
-    Serial.println(WiFi.softAPIP());
-    dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
-    isAPMode = true;
-    WiFiMode_t mode = WiFi.getMode();
-    Serial.println(F("[WIFI] AP Mode Started"));
-    Serial.printf("[WIFI] WiFi mode after STA failure and setting AP: %s\n",
-                  mode == WIFI_OFF ? "OFF"
-                : mode == WIFI_STA    ? "STA ONLY"
-                : mode == WIFI_AP     ? "AP ONLY"
-                : mode == WIFI_AP_STA ? "AP + STA (Error!)"
-                                      : "UNKNOWN");
   }
+  wifiNetNum++;
+
   // Start mdns
   if (!MDNS.begin(mdns)) {
     Serial.println(F("[WIFI] Error setting up mDNS responder."));
@@ -323,11 +346,40 @@ void connectWiFi() {
   Serial.println(F("[WIFI] mDNS responder started."));
 }
 
+void startAPMode() {
+  Serial.println(F("[WIFI] Unable to connect to a WiFi network. Starting AP mode..."));
+  WiFi.mode(WIFI_AP);
+  if (strlen(apSsid) > 0) {
+    if (strlen(apPassword) >= 8) {
+      WiFi.softAP(apSsid, apPassword);
+    } else {
+      WiFi.softAP(apSsid, NULL);
+    }
+  } else if (strlen(DEFAULT_AP_PASSWORD) >= 8) {
+    WiFi.softAP(DEFAULT_AP_SSID, DEFAULT_AP_PASSWORD);
+  } else {
+    WiFi.softAP(DEFAULT_AP_SSID, NULL);
+  }
+  Serial.print(F("[WIFI] AP IP address: "));
+  Serial.println(WiFi.softAPIP());
+  dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+  WiFiMode_t mode = WiFi.getMode();
+  Serial.println(F("[WIFI] AP Mode Started"));
+  Serial.printf("[WIFI] WiFi mode after STA failure and setting AP: %s\n",
+                mode == WIFI_OFF    ? "OFF"
+              : mode == WIFI_STA    ? "STA ONLY"
+              : mode == WIFI_AP     ? "AP ONLY"
+              : mode == WIFI_AP_STA ? "AP + STA (Error!)"
+                                    : "UNKNOWN");
+  wifiLastTime = millis();
+  wifiState = WIFI_APMODE;
+}
+
 // -----------------------------------------------------------------------------
 // Time Functions
 // -----------------------------------------------------------------------------
 void startNTPSync(bool resetTime, int retryCount = 0) {
-  if (isAPMode) {
+  if (wifiState == WIFI_APMODE) {
     return;
   }
   Serial.println(F("[TIME] Starting NTP sync"));
@@ -412,7 +464,7 @@ void setupWebServer() {
       ssidArray[i] = getSafeSsid(i);
       pwdArray[i] = getSafePassword(i);
     }
-    doc[F("mode")] = isAPMode ? "ap" : "sta";
+    doc[F("mode")] = wifiState == WIFI_APMODE ? "ap" : "sta";
     String response;
     serializeJson(doc, response);
     request->send(200, "application/json", response);
@@ -444,9 +496,10 @@ void setupWebServer() {
               || n == "password8"
               || n == "password9") {
         if (v != "********" && v.length() > 0) {
-          int num = n.substring(8,9).toInt();
+          int num = n.substring(8).toInt();
           Serial.printf("[WEBSERVER] Password change: %d\n", num+1);
-          if (String(passwords[num]) != v) {
+          if (strcmp(passwords[num], v.c_str()) != 0) {
+            Serial.println(F("[WEBSERVER] RestartWiFi set to true."));
             restartWifi = true;
           }
           strlcpy(passwords[num], v.c_str(), sizeof(passwords[num])); // user entered a new password
@@ -464,12 +517,21 @@ void setupWebServer() {
               || n == "ssid7"
               || n == "ssid8"
               || n == "ssid9") {
-        int num = n.substring(4,5).toInt();
-        Serial.printf("[WEBSERVER] SSID #%d change: %s\n", num+1, v.c_str());
-        if (String(ssids[num]) != v) {
-          restartWifi = true;
+        int num = n.substring(4).toInt();
+        if (v.length() == 0) {
+          Serial.printf("[WEBSERVER] SSID #%d blank. Old: '%s'\n", num+1, ssids[num]);
+          if (strlen(ssids[num]) > 0) {
+            restartWifi = true;
+          }
+          strlcpy(ssids[num], "", sizeof(ssids[num]));
+          strlcpy(passwords[num], "", sizeof(passwords[num]));
+        } else {
+          Serial.printf("[WEBSERVER] SSID #%d specified: '%s' (%s)\n", num+1, v.c_str(), ssids[num]);
+          if (strcmp(ssids[num], v.c_str()) != 0) {
+            restartWifi = true;
+          }
+          strlcpy(ssids[num], v.c_str(), sizeof(ssids[num]));
         }
-        strlcpy(ssids[num], v.c_str(), sizeof(ssids[num]));
       } else if (n == "ntpServer1") {
         strlcpy(ntpServer1, v.c_str(), sizeof(ntpServer1));
       } else if (n == "ntpServer2") {
@@ -480,7 +542,7 @@ void setupWebServer() {
         strlcpy(mdns, v.c_str(), sizeof(mdns));
       } else if (n == "countupdownDate") {
         countupdownDateStr = v;
-      } else if (n == "coundupdownTime") {
+      } else if (n == "countupdownTime") {
         countupdownTimeStr = v;
       } else if (n == "apSsid") {
         strlcpy(apSsid, v.c_str(), sizeof(apSsid));
@@ -521,7 +583,7 @@ void setupWebServer() {
       request->send(200, "application/json", response);
     }
 
-    request->onDisconnect([&restartWifi]() {
+    request->onDisconnect([restartWifi]() {
       if (restartWifi) {
         Serial.println(F("[WEBSERVER] WiFi information changed, restarting WiFi."));
         connectWiFi();
@@ -608,9 +670,9 @@ void setupWebServer() {
   
   server.on("/ap_status", HTTP_GET, [](AsyncWebServerRequest *request) {
     Serial.print(F("[WEBSERVER] Request: /ap_status. isAPMode = "));
-    Serial.println(isAPMode);
+    Serial.println(wifiState == WIFI_APMODE);
     String json = "{\"isAP\": ";
-    json += (isAPMode) ? "true" : "false";
+    json += (wifiState == WIFI_APMODE) ? "true" : "false";
     json += "}";
     request->send(200, "application/json", json);
   });
@@ -783,10 +845,10 @@ void setupWebServer() {
         setenv("TZ", ianaToPosix(timeZone), 1);
         tzset();
         settimeofday(&newNow, NULL);
-        time_t now_time = time(nullptr);
-        struct tm timeinfo;
-        localtime_r(&now_time, &timeinfo);
-        rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+        time_t nowTime = time(nullptr);
+        struct tm timeInfo;
+        localtime_r(&nowTime, &timeInfo);
+        rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
       }
     }
     DateTime dtNow = rtc.now();
@@ -817,12 +879,13 @@ void setup() {
   // Check if RTC was found.
   if (!rtc.begin()) {
     Serial.println(F("[SETUP] Unable to find RTC."));
-    while (1) delay(10);
-  }
-
-  // Set time if new device or after a power loss.
-  if (rtc.lostPower()) {
-    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    rtcEnabled = false;
+  } else {
+    rtcEnabled = true;
+    if (rtc.lostPower()) {
+      // Set time if new device or after a power loss.
+      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    }
   }
 
 #if ESPVERS == 8266
@@ -847,19 +910,9 @@ void setup() {
   P.setIntensity(brightness);
   P.setZoneEffect(0, flipDisplay, PA_FLIP_UD);
   P.setZoneEffect(0, flipDisplay, PA_FLIP_LR);
-
   Serial.println(F("[SETUP] Parola (LED Matrix) initialized"));
 
   connectWiFi();
-
-  if (isAPMode) {
-    Serial.println(F("[SETUP] WiFi connection failed. Device is in AP Mode."));
-  } else if (WiFi.status() == WL_CONNECTED) {
-    Serial.println(F("[SETUP] WiFi connected successfully to local network."));
-  } else {
-    Serial.println(F("[SETUP] WiFi state is uncertain after connection attempt."));
-  }
-
   setupWebServer();
   Serial.println(F("[SETUP] Setup complete"));
   printConfigToSerial();
@@ -867,12 +920,52 @@ void setup() {
 }
 
 void loop() {
-  if (isAPMode) {
-    dnsServer.processNextRequest();
-  } else {
-    if (multi.run(wifiTimeoutMs) != WL_CONNECTED) {
-      connectWiFi();
-    }
+  uint32_t curMillis = millis();
+  switch (wifiState) {
+    // Attempting to connect still.
+    case WIFI_WORKING:
+      // Check timeout
+      if (curMillis >= wifiLastTime + wifiTimeout) {
+        // try to connect to next -- wifiNetNum is always the index of the SSID/Password for
+        // the network that timed out
+        for (int i=wifiNetNum+1; i<10; i++) {
+          wifiNetNum = i;
+          if (strlen(ssids[i]) > 0) {
+            Serial.printf("[WIFI] Attempting to connect to : %s\n", ssids[i]);
+            WiFi.begin(ssids[i],passwords[i]);
+            wifiLastTime = millis();
+            break;
+          }
+        }
+        // wifiNetNum could be 9 (loop executed at least once) or 
+        // 10 (9 was the network that timed out) before the increment
+        wifiNetNum++;
+      }
+      // Only reachable if no networks specified or they all timed out
+      if (wifiNetNum >= 10) {
+        startAPMode();
+      }
+      break;
+    case WIFI_DISCONNECTED:
+      // If disconnected and it doesn't reconnect within the timeout
+      // then start the connection process again
+      // potentially there is a network available that precedes
+      // the disconnected network in the array
+      if (curMillis >= wifiLastTime + wifiTimeout) {
+        Serial.println(F("[WIFI] WiFi disconnect timeout reached."));
+        connectWiFi();
+      }
+      break;
+    case WIFI_APMODE:
+      dnsServer.processNextRequest();
+      // Try to reconnect to a network every apTimeout when in ap mode
+      if (curMillis >= wifiLastTime + apTimeout) {
+        Serial.println(F("[WIFI] AP Mode timeout reached."));
+        connectWiFi();
+      }
+      break;
+    default:
+      break;
   }
 
   static bool colonVisible = true;
@@ -905,10 +998,10 @@ void loop() {
         setenv("TZ", ianaToPosix(timeZone), 1);
         tzset();
         ntpState = NTP_IDLE;
-        time_t now_time = time(nullptr);
-        struct tm timeinfo;
-        localtime_r(&now_time, &timeinfo);
-        rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+        time_t nowTime = time(nullptr);
+        struct tm timeInfo;
+        localtime_r(&nowTime, &timeInfo);
+        rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
         break;
       }
     case NTP_FAILED:
@@ -919,65 +1012,46 @@ void loop() {
       }
   }
 
-  DateTime dtNow = rtc.now();
+  DateTime dtNow;
+  if (rtcEnabled) {
+    dtNow = rtc.now();
+  } else {
+    time_t nowTime = time(nullptr);
+    struct tm timeInfo;
+    localtime_r(&nowTime, &timeInfo);
+    dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+  }
+  char timeWithSeconds[24];
   if (countupdownTargetTimestamp > 0) { // --- COUNTUPDOWN Display Mode ---
     long timeSeconds = countupdownTargetTimestamp - dtNow.unixtime();
     if (timeSeconds < 0) {
       timeSeconds = timeSeconds * -1;
     }
-
-    uint8_t hours = timeSeconds / 3600;
-    uint8_t minutes = (timeSeconds % 3600) / 60;
-    uint8_t seconds = timeSeconds % 60;
-
     // Format the full string
-    char timeWithSeconds[12];
-    snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%d:%02d:%02d", hours, minutes, seconds);
-
-    // keep spacing logic the same ---
-    char timeSpacedStr[24];
-    int j = 0;
-    for (int i = 0; timeWithSeconds[i] != '\0'; i++) {
-      timeSpacedStr[j++] = timeWithSeconds[i];
-      if (timeWithSeconds[i + 1] != '\0') {
-        timeSpacedStr[j++] = ' ';
-      }
+    if (colonVisible) {
+      snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%ld:%02ld:%02ld", timeSeconds / 3600, (timeSeconds % 3600) / 60, timeSeconds % 60);
+    } else {
+      snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%ld %02ld %02ld", timeSeconds / 3600, (timeSeconds % 3600) / 60, timeSeconds % 60);
     }
-    timeSpacedStr[j] = '\0';
-    // build final string ---
-    String formattedTime = String(timeSpacedStr);
-    P.setCharSpacing(0);
-    // --- DISPLAY COUNTUPDOWN ---
-    String timeString = formattedTime;
-    if (!colonVisible) {
-      timeString.replace(":", " ");
-    }
-    P.setTextAlignment(PA_CENTER);
-    P.print(timeString);
   }  // End COUNTUPDOWN Display Mode
   else { // --- CLOCK Display Mode ---
-    // build base HH:MM:SS first ---
-    char timeWithSeconds[12];
     snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%02d:%02d:%02d", dtNow.hour(), dtNow.minute(), dtNow.second());
-  
-    // keep spacing logic the same ---
-    char timeSpacedStr[24];
-    int j = 0;
-    for (int i = 0; timeWithSeconds[i] != '\0'; i++) {
-      timeSpacedStr[j++] = timeWithSeconds[i];
-      if (timeWithSeconds[i + 1] != '\0') {
-        timeSpacedStr[j++] = ' ';
-      }
-    }
-    timeSpacedStr[j] = '\0';
-  
-    // build final string ---
-    String formattedTime = String(timeSpacedStr);
-    P.setCharSpacing(0);
-
-    // --- DISPLAY CLOCK ---
-    P.setTextAlignment(PA_CENTER);
-    P.print(formattedTime);
   } // End CLOCK Display Mode
+  // keep spacing logic the same ---
+  char timeSpacedStr[24];
+  int j = 0;
+  for (int i = 0; timeWithSeconds[i] != '\0'; i++) {
+    timeSpacedStr[j++] = timeWithSeconds[i];
+    if (timeWithSeconds[i + 1] != '\0') {
+      timeSpacedStr[j++] = ' ';
+    }
+  }
+  timeSpacedStr[j] = '\0';
+  // build final string ---
+  String formattedTime = String(timeSpacedStr);
+  // --- DISPLAY COUNTUPDOWN ---
+  P.setCharSpacing(0);
+  P.setTextAlignment(PA_CENTER);
+  P.print(formattedTime);
   yield();
 }
