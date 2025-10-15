@@ -27,9 +27,42 @@
 
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_DEVICES   4
+#define DEBUG         false
 
-const char *DEFAULT_AP_SSID = "chronoclock";
-const char *DEFAULT_AP_PASSWORD = "chrono157";
+const char    *DEFAULT_AP_SSID      = "chronoclock";
+const char    *DEFAULT_AP_PASSWORD  = "chrono157";
+const char    *PASSWORD_MASK        = "********";
+const uint32_t COLON_BLINK_INTERVAL = 800;
+
+/*
+ * Function definitions
+*/
+// --- Config Load / Save / Safe Getters ---
+void loadConfig();
+String saveConfig();
+const char *getSafeSsid(int ix);
+const char *getSafePassword(int ix);
+// -- Network ---
+void connectWiFi();
+void wifiGotIP();
+void wifiDisconnected();
+void startAPMode();
+void startMDNS();
+void startElegantOTA();
+#if ESPVERS == 32
+void WiFiStationGotIP(WiFiEvent_t event, WiFiEventInfo_t info);
+void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info);
+#endif
+#if ESPVERS == 8266
+WiFiEventHandler WiFiStationGotIP, WiFiStationDisconnected;
+#endif
+// --- Time ---
+void startNTPSync(bool resetTime, int retryCount);
+void setTimeZone(const char *local_TZ);
+// --- Utility ---
+void printConfigToSerial();
+// --- Web Server ---
+void setupWebServer();
 
 MD_Parola P = MD_Parola(HARDWARE_TYPE, DATA_PIN, CLK_PIN, CS_PIN, MAX_DEVICES);
 RTC_DS3231 rtc;
@@ -47,29 +80,6 @@ ChronoWiFiState wifiState    = WIFI_DISCONNECTED;
 uint8_t         wifiNetNum   = 0;
 uint32_t        wifiLastTime = 0;
 
-#if ESPVERS == 32
-void WiFiStationGotIP(WiFiEvent_t event, WiFiEventInfo_t info) {
-  Serial.println(F("[WIFI] Connection successful."));
-  wifiState = WIFI_CONNECTED;
-  WiFiMode_t mode = WiFi.getMode();
-  Serial.printf("[WIFI] WiFi mode after STA connection: %s\n",
-                mode == WIFI_OFF    ? "OFF"
-              : mode == WIFI_STA    ? "STA ONLY"
-              : mode == WIFI_AP     ? "AP ONLY"
-              : mode == WIFI_AP_STA ? "AP + STA (Error!)"
-                                    : "UNKNOWN");
-    Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
-}
-
-void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
-  Serial.println("[WIFI] Network has disconnected.");
-  wifiLastTime = millis();
-  wifiState = WIFI_DISCONNECTED;
-}
-#endif
-#if ESPVERS == 8266
-WiFiEventHandler WiFiStationGotIP, WiFiStationDisconnected;
-#endif
 
 // Settings
 char mdns[64]          = "";
@@ -80,11 +90,13 @@ char passwords[10][64] = {"","","","","","","","","",""};
 char timeZone[64]      = "";
 int  brightness        = 10;
 bool flipDisplay       = false;
+bool twelveHour        = false;
 char ntpServer1[128]   = "pool.ntp.org";
 char ntpServer2[128]   = "time.nist.gov";
 
 // Globals
 bool          rtcEnabled                 = false;
+bool          colonVisible               = true;
 unsigned long lastColonBlink             = 0;
 time_t        countupdownTargetTimestamp = 0;  // Unix timestamp
 
@@ -106,28 +118,19 @@ const int           ntpRefreshTime         = 3600000; // Auto refresh NTP sync e
 const int           maxNtpRetries          = 3;
 int                 ntpRetryCount          = 0;
 
-// --- Safe WiFi credential getters ---
-const char *getSafeSsid(int ix) {
-  return ssids[ix];
-}
-
-const char *getSafePassword(int ix) {
-  if (strlen(passwords[ix]) == 0) {  // No password set yet — return empty string for fresh install
-    return "";
-  } else {  // Password exists — mask it in the web UI
-    return "********";
-  }
-}
-
-// -----------------------------------------------------------------------------
-// Configuration Load & Save
-// -----------------------------------------------------------------------------
+/*
+ * Configuration Load & Save
+ */
 void loadConfig() {
+#if DEBUG==true
   Serial.println(F("[CONFIG] Loading configuration..."));
+#endif
 
   // Check if config.json exists, if not, create default
   if (!LittleFS.exists("/config.json")) {
+#if DEBUG==true
     Serial.println(F("[CONFIG] config.json not found, creating with defaults..."));
+#endif
     JsonDocument doc;
     doc[F("mdns")] = mdns;
     doc[F("apSsid")] = apSsid;
@@ -135,34 +138,44 @@ void loadConfig() {
     doc[F("timeZone")] = timeZone;
     doc[F("brightness")] = brightness;
     doc[F("flipDisplay")] = flipDisplay;
+    doc[F("twelveHour")] = twelveHour;
     doc[F("ntpServer1")] = ntpServer1;
     doc[F("ntpServer2")] = ntpServer2;
 
-    JsonArray ssidArray = doc["ssids"].to<JsonArray>();
-    JsonArray pwdArray = doc["passwords"].to<JsonArray>();
+    JsonArray ssidArray = doc[F("ssids")].to<JsonArray>();
+    JsonArray pwdArray = doc[F("passwords")].to<JsonArray>();
     for (int i=0;i<10;i++) {
       ssidArray[i] = ssids[i];
       pwdArray[i] = passwords[i];
     }
 
     // Add countupdown defaults when creating a new config.json
-    JsonObject countupdownObj = doc["countupdown"].to<JsonObject>();
-    countupdownObj["targetTimestamp"] = 0;
+    JsonObject countupdownObj = doc[F("countupdown")].to<JsonObject>();
+    countupdownObj[F("targetTimestamp")] = 0;
 
     File f = LittleFS.open("/config.json", "w");
     if (f) {
       serializeJsonPretty(doc, f);
       f.close();
+#if DEBUG==true
       Serial.println(F("[CONFIG] Default config.json created."));
-    } else {
+#endif
+    }
+#if DEBUG==true
+    else {
       Serial.println(F("[CONFIG] Failed to create default config.json"));
     }
+#endif
   }
 
+#if DEBUG==true
   Serial.println(F("[CONFIG] Attempting to open config.json for reading."));
+#endif
   File configFile = LittleFS.open("/config.json", "r");
   if (!configFile) {
+#if DEBUG==true
     Serial.println(F("[CONFIG] Failed to open config.json for reading. Cannot load config."));
+#endif
     return;
   }
 
@@ -171,79 +184,77 @@ void loadConfig() {
   configFile.close();
 
   if (error) {
+#if DEBUG==true
     Serial.print(F("[CONFIG] JSON parse failed during load: "));
     Serial.println(error.f_str());
+#endif
     return;
   }
 
-  JsonArray ssidArray = doc["ssids"];
-  JsonArray pwdArray = doc["passwords"];
+  JsonArray ssidArray = doc[F("ssids")];
+  JsonArray pwdArray = doc[F("passwords")];
   for (int i=0; i<10; i++) {
     strlcpy(ssids[i], ssidArray[i] | "", sizeof(ssids[i]));
     strlcpy(passwords[i], pwdArray[i] | "", sizeof(passwords[i]));
   }
-  strlcpy(mdns, doc["mdns"] | "chronoclock", sizeof(mdns));
-  strlcpy(apSsid, doc["apSsid"] | "", sizeof(apSsid));
-  strlcpy(apPassword, doc["apPassword"] | "", sizeof(apPassword));
-  strlcpy(timeZone, doc["timeZone"] | "Etc/UTC", sizeof(timeZone));
-  brightness = doc["brightness"] | 7;
-  flipDisplay = doc["flipDisplay"] | false;
-  strlcpy(ntpServer1, doc["ntpServer1"] | "pool.ntp.org", sizeof(ntpServer1));
-  strlcpy(ntpServer2, doc["ntpServer2"] | "time.nist.gov", sizeof(ntpServer2));
+  strlcpy(mdns, doc[F("mdns")] | "chronoclock", sizeof(mdns));
+  strlcpy(apSsid, doc[F("apSsid")] | "", sizeof(apSsid));
+  strlcpy(apPassword, doc[F("apPassword")] | "", sizeof(apPassword));
+  strlcpy(timeZone, doc[F("timeZone")] | "Etc/UTC", sizeof(timeZone));
+  brightness = doc[F("brightness")] | 7;
+  flipDisplay = doc[F("flipDisplay")] | false;
+  twelveHour = doc[F("twelveHour")] | false;
+  strlcpy(ntpServer1, doc[F("ntpServer1")] | "pool.ntp.org", sizeof(ntpServer1));
+  strlcpy(ntpServer2, doc[F("ntpServer2")] | "time.nist.gov", sizeof(ntpServer2));
 
   // --- COUNTUPDOWN CONFIG LOADING ---
-  if (doc["countupdown"].is<JsonObject>()) {
-    JsonObject countupdownObj = doc["countupdown"];
-    countupdownTargetTimestamp = countupdownObj["targetTimestamp"] | 0;
+  if (doc[F("countupdown")].is<JsonObject>()) {
+    JsonObject countupdownObj = doc[F("countupdown")];
+    countupdownTargetTimestamp = countupdownObj[F("targetTimestamp")] | 0;
   } else {
     countupdownTargetTimestamp = 0;
+#if DEBUG==true
     Serial.println(F("[CONFIG] Countupdown object not found, defaulting to disabled."));
+#endif
   }
+#if DEBUG==true
   Serial.println(F("[CONFIG] Configuration loaded."));
+#endif
 }
 
 String saveConfig() {
     JsonDocument doc;
-
-    File configFile = LittleFS.open("/config.json", "r");
-    if (configFile) {
-      Serial.println(F("[SAVE] Existing config.json found, loading for update..."));
-      DeserializationError err = deserializeJson(doc, configFile);
-      configFile.close();
-      if (err) {
-        Serial.print(F("[SAVE] Error parsing existing config.json: "));
-        Serial.println(err.f_str());
-      }
-    } else {
-      Serial.println(F("[SAVE] config.json not found, starting with empty doc for save."));
-    }
-    
     doc[F("mdns")] = mdns;
     doc[F("apSsid")] = apSsid;
     doc[F("apPassword")] = apPassword;
     doc[F("timeZone")] = timeZone;
     doc[F("brightness")] = brightness;
     doc[F("flipDisplay")] = flipDisplay;
+    doc[F("twelveHour")] = twelveHour;
     doc[F("ntpServer1")] = ntpServer1;
     doc[F("ntpServer2")] = ntpServer2;
 
-    JsonArray ssidArray = doc["ssids"].to<JsonArray>();
-    JsonArray pwdArray = doc["passwords"].to<JsonArray>();
+    JsonArray ssidArray = doc[F("ssids")].to<JsonArray>();
+    JsonArray pwdArray = doc[F("passwords")].to<JsonArray>();
     for (int i=0;i<10;i++) {
       ssidArray[i] = ssids[i];
       pwdArray[i] = passwords[i];
     }
 
-    JsonObject countupdownObj = doc["countupdown"].to<JsonObject>();
-    countupdownObj["targetTimestamp"] = countupdownTargetTimestamp;
+    JsonObject countupdownObj = doc[F("countupdown")].to<JsonObject>();
+    countupdownObj[F("targetTimestamp")] = countupdownTargetTimestamp;
 
     if (LittleFS.exists("/config.json")) {
+#if DEBUG==true
       Serial.println(F("[SAVE] Renaming /config.json to /config.bak"));
+#endif
       LittleFS.rename("/config.json", "/config.bak");
     }
     File f = LittleFS.open("/config.json", "w");
     if (!f) {
+#if DEBUG==true
       Serial.println(F("[SAVE] ERROR: Failed to open /config.json for writing!"));
+#endif
       LittleFS.rename("/config.bak", "/config.json");
       JsonDocument errorDoc;
       errorDoc[F("error")] = "Failed to write config file.";
@@ -252,14 +263,21 @@ String saveConfig() {
       return response;
     }
 
+#if DEBUG==true
     size_t bytesWritten = serializeJson(doc, f);
-    Serial.printf("[SAVE] Bytes written to /config.json: %u\n", bytesWritten);
+    Serial.print(F("[SAVE] Bytes written to /config.json: "));
+    Serial.println(bytesWritten);
+#endif
     f.close();
+#if DEBUG==true
     Serial.println(F("[SAVE] /config.json file closed."));
+#endif
 
     File verify = LittleFS.open("/config.json", "r");
     if (!verify) {
+#if DEBUG==true
       Serial.println(F("[SAVE] ERROR: Failed to open /config.json for reading during verification!"));
+#endif
       LittleFS.rename("/config.bak", "/config.json");
       JsonDocument errorDoc;
       errorDoc[F("error")] = "Verification failed: Could not re-open config file.";
@@ -278,9 +296,11 @@ String saveConfig() {
     verify.close();
 
     if (err) {
+#if DEBUG==true
       Serial.print(F("[SAVE] Config corrupted after save: "));
-      LittleFS.rename("/config.bak", "/config.json");
       Serial.println(err.f_str());
+#endif
+      LittleFS.rename("/config.bak", "/config.json");
       JsonDocument errorDoc;
       errorDoc[F("error")] = String("Config corrupted. Error: ") + err.f_str();
       String response;
@@ -291,11 +311,27 @@ String saveConfig() {
     return "";
 }
 
-// -----------------------------------------------------------------------------
-// WiFi Setup
-// -----------------------------------------------------------------------------
+// --- Safe WiFi credential getters ---
+const char *getSafeSsid(int ix) {
+  return ssids[ix];
+}
+
+const char *getSafePassword(int ix) {
+  // If no SSID set, or the password is empty, return empty, otherwise mask.
+  if (strlen(ssids[ix]) == 0 || strlen(passwords[ix]) == 0) {
+    return "";
+  } else {
+    return PASSWORD_MASK;
+  }
+}
+
+/*
+ * Network Code
+*/
 void connectWiFi() {
+#if DEBUG==true
   Serial.println(F("[WIFI] Connecting to WiFi..."));
+#endif
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true);
   dnsServer.stop();
@@ -309,48 +345,57 @@ void connectWiFi() {
 #endif
 #if ESPVERS == 8266
   WiFiStationGotIP = WiFi.onStationModeGotIP([](const WiFiEventStationModeGotIP& event) {
-    Serial.println(F("[WIFI] Connection successful."));
-    wifiState = WIFI_CONNECTED;
-    WiFiMode_t mode = WiFi.getMode();
-    Serial.printf("[WIFI] WiFi mode after STA connection: %s\n",
-                  mode == WIFI_OFF    ? "OFF"
-                : mode == WIFI_STA    ? "STA ONLY"
-                : mode == WIFI_AP     ? "AP ONLY"
-                : mode == WIFI_AP_STA ? "AP + STA (Error!)"
-                                      : "UNKNOWN");
-    Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
+    wifiGotIP();
   });
 
   WiFiStationDisconnected = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event) {
-    Serial.println("[WIFI] Network has disconnected.");
-    wifiLastTime = millis();
-    wifiState = WIFI_DISCONNECTED;
+    wifiDisconnected();
   });
 #endif
 
   for (int i=0;i<10;i++) {
     wifiNetNum = i;
     if (strlen(ssids[i]) > 0) {
-      Serial.printf("[WIFI] Attempting to connect to: %s\n", ssids[i]);
+#if DEBUG==true
+      Serial.print(F("[WIFI] Attempting to connect to: "));
+      Serial.println(ssids[i]);
+#endif
       WiFi.begin(ssids[i],passwords[i]);
       wifiLastTime = millis();
       return;
     }
   }
   wifiNetNum++;
+}
 
-  // Start mdns
-  if (!MDNS.begin(mdns)) {
-    Serial.println(F("[WIFI] Error setting up mDNS responder."));
-    while (1) {
-      delay(1000);
-    }
-  }
-  Serial.println(F("[WIFI] mDNS responder started."));
+void wifiGotIP() {
+  wifiState = WIFI_CONNECTED;
+#if DEBUG==true
+  WiFiMode_t mode = WiFi.getMode();
+  Serial.println(F("[WIFI] Connection successful."));
+  Serial.print(F("[WIFI] WiFi mode after STA connection: "));
+  Serial.println( mode == WIFI_OFF    ? F("OFF")
+                : mode == WIFI_STA    ? F("STA")
+                : mode == WIFI_AP     ? F("AP")
+                : mode == WIFI_AP_STA ? F("AP + STA")
+                                      : F("UNKNOWN"));
+  Serial.print(F("[WIFI] IP: "));
+  Serial.println(WiFi.localIP().toString());
+#endif
+}
+
+void wifiDisconnected() {
+#if DEBUG==true
+  Serial.println(F("[WIFI] Network has disconnected."));
+#endif
+  wifiLastTime = millis();
+  wifiState = WIFI_DISCONNECTED;
 }
 
 void startAPMode() {
+#if DEBUG==true
   Serial.println(F("[WIFI] Unable to connect to a WiFi network. Starting AP mode..."));
+#endif
   WiFi.mode(WIFI_AP);
   if (strlen(apSsid) > 0) {
     if (strlen(apPassword) >= 8) {
@@ -363,47 +408,90 @@ void startAPMode() {
   } else {
     WiFi.softAP(DEFAULT_AP_SSID, NULL);
   }
-  Serial.print(F("[WIFI] AP IP address: "));
-  Serial.println(WiFi.softAPIP());
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+#if DEBUG==true
   WiFiMode_t mode = WiFi.getMode();
   Serial.println(F("[WIFI] AP Mode Started"));
-  Serial.printf("[WIFI] WiFi mode after STA failure and setting AP: %s\n",
-                mode == WIFI_OFF    ? "OFF"
-              : mode == WIFI_STA    ? "STA ONLY"
-              : mode == WIFI_AP     ? "AP ONLY"
-              : mode == WIFI_AP_STA ? "AP + STA (Error!)"
-                                    : "UNKNOWN");
+  Serial.print(F("[WIFI] WiFi mode after STA failure and setting AP:"));
+  Serial.println( mode == WIFI_OFF    ? F("OFF")
+                : mode == WIFI_STA    ? F("STA")
+                : mode == WIFI_AP     ? F("AP")
+                : mode == WIFI_AP_STA ? F("AP + STA")
+                : F("UNKNOWN"));
+  Serial.print(F("[WIFI] AP IP address: "));
+  Serial.println(WiFi.softAPIP());
+#endif
   wifiLastTime = millis();
   wifiState = WIFI_APMODE;
 }
 
-// -----------------------------------------------------------------------------
-// Time Functions
-// -----------------------------------------------------------------------------
+void startMDNS() {
+#if DEBUG==true
+  Serial.println(F("[WIFI] Starting mDNS responder."));
+#endif
+  MDNS.end();
+  MDNS.begin(mdns);
+#if DEBUG==true
+  Serial.println(F("[WIFI] mDNS responder started."));
+#endif
+}
+
+void startElegantOTA() {
+#if DEBUG==true
+  Serial.println(F("[SETUP] Starting ElegantOTA."));
+#endif
+  ElegantOTA.setAuth(ELEGANT_USER, ELEGANT_PASS);
+  ElegantOTA.begin(&server);
+}
+
+#if ESPVERS == 32
+void WiFiStationGotIP(WiFiEvent_t event, WiFiEventInfo_t info) {
+  wifiGotIP();
+}
+
+void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
+  wifiDisconnected();
+}
+#endif
+
+/*
+ * Time Functions
+ */
 void startNTPSync(bool resetTime, int retryCount = 0) {
   if (wifiState == WIFI_APMODE) {
     return;
   }
+#if DEBUG==true
   Serial.println(F("[TIME] Starting NTP sync"));
+#endif
 
+  setTimeZone(""); // ConfigTime is going to sync assuming the server is set to UTC0, so set it to UTC0.
   if (resetTime) {
-    Serial.println(F("Resetting time."));
-    struct timeval now = { .tv_sec = 0 };
+#if DEBUG==true
+    Serial.println(F("[TIME] Resetting time."));
+#endif
+    struct timeval now = { 0, 0 };
     settimeofday(&now, NULL);
   }
   ntpState = NTP_SYNCING;
   ntpLastTime = millis();
   configTime(0, 0, ntpServer1, ntpServer2);
-  setenv("TZ", ianaToPosix(timeZone), 1);
-  tzset();
   ntpRetryCount = retryCount + 1;
 }
 
-// -----------------------------------------------------------------------------
-// Utility
-// -----------------------------------------------------------------------------
+void setTimeZone(const char *localTZ) {
+#if DEBUG==true
+  Serial.printf("[TIME] Setting Time Zone to: %s (%s)\n", localTZ, ianaToPosix(localTZ));
+#endif
+  setenv("TZ", ianaToPosix(localTZ), 1);
+  tzset();
+}
+
+/*
+ * Utility
+ */
 void printConfigToSerial() {
+#if DEBUG==true
   Serial.println(F("========= Loaded Configuration ========="));
   for (int i=0;i<10;i++) {
     Serial.print(F("Wifi Network "));
@@ -429,24 +517,33 @@ void printConfigToSerial() {
   Serial.println(countupdownTargetTimestamp);
   Serial.println(F("========================================"));
   Serial.println();
+#endif
 }
 
-// -----------------------------------------------------------------------------
-// Web Server and Captive Portal
-// -----------------------------------------------------------------------------
+/*
+ * Web Server
+ */
 void setupWebServer() {
+#if DEBUG==true
   Serial.println(F("[WEBSERVER] Setting up web server..."));
+#endif
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /"));
+#endif
     request->send(LittleFS, "/index.html", "text/html");
   });
 
   server.on("/config.json", HTTP_GET, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /config.json"));
+#endif
     File f = LittleFS.open("/config.json", "r");
     if (!f) {
+#if DEBUG==true
       Serial.println(F("[WEBSERVER] Error opening /config.json"));
+#endif
       request->send(500, "application/json", "{\"error\":\"Failed to open config.json\"}");
       return;
     }
@@ -454,15 +551,17 @@ void setupWebServer() {
     DeserializationError err = deserializeJson(doc, f);
     f.close();
     if (err) {
+#if DEBUG==true
       Serial.print(F("[WEBSERVER] Error parsing /config.json: "));
       Serial.println(err.f_str());
+#endif
       request->send(500, "application/json", "{\"error\":\"Failed to parse config.json\"}");
       return;
     }
 
     // Always sanitize before sending to browser
-    JsonArray ssidArray = doc["ssids"];
-    JsonArray pwdArray = doc["passwords"];
+    JsonArray ssidArray = doc[F("ssids")];
+    JsonArray pwdArray = doc[F("passwords")];
     for (int i=0;i<10;i++) {
       ssidArray[i] = getSafeSsid(i);
       pwdArray[i] = getSafePassword(i);
@@ -474,7 +573,9 @@ void setupWebServer() {
   });
 
   server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /save"));
+#endif
     bool restartWifi = false;
 
     String countupdownDateStr = "";
@@ -488,6 +589,8 @@ void setupWebServer() {
         brightness = v.toInt();
       } else if (n == "flipDisplay") {
         flipDisplay = (v == "true" || v == "on" || v == "1");
+      } else if (n == "twelveHour") {
+        twelveHour = (v == "true" || v == "on" || v == "1");
       } else if (n == "password0"
               || n == "password1"
               || n == "password2"
@@ -498,18 +601,25 @@ void setupWebServer() {
               || n == "password7"
               || n == "password8"
               || n == "password9") {
-        if (v != "********" && v.length() > 0) {
+        if (strcmp(v.c_str(), PASSWORD_MASK) != 0 && v.length() > 0) {
           int num = n.substring(8).toInt();
-          Serial.printf("[WEBSERVER] Password change: %d\n", num+1);
+#if DEBUG==true
+          Serial.print(F("[WEBSERVER] Password changed for network "));
+          Serial.println(num+1);
+#endif
           if (strcmp(passwords[num], v.c_str()) != 0) {
+#if DEBUG==true
             Serial.println(F("[WEBSERVER] RestartWiFi set to true."));
+#endif
             restartWifi = true;
           }
           strlcpy(passwords[num], v.c_str(), sizeof(passwords[num])); // user entered a new password
-        } else {
-          Serial.println(F("[WEBSERVER] Password unchanged."));
-          // do nothing, keep the one already in doc
         }
+#if DEBUG==true
+        else { // do nothing, keep previous
+          Serial.println(F("[WEBSERVER] Password unchanged."));
+        }
+#endif
       } else if (n == "ssid0"
               || n == "ssid1"
               || n == "ssid2"
@@ -521,15 +631,17 @@ void setupWebServer() {
               || n == "ssid8"
               || n == "ssid9") {
         int num = n.substring(4).toInt();
+#if DEBUG==true
+        Serial.print(F("[WEBSERVER] SSID "));
+        Serial.printf("%d: '%s' (%s)\n", num+1, v.c_str(), ssids[num]);
+#endif
         if (v.length() == 0) {
-          Serial.printf("[WEBSERVER] SSID #%d blank. Old: '%s'\n", num+1, ssids[num]);
           if (strlen(ssids[num]) > 0) {
             restartWifi = true;
           }
           strlcpy(ssids[num], "", sizeof(ssids[num]));
           strlcpy(passwords[num], "", sizeof(passwords[num]));
         } else {
-          Serial.printf("[WEBSERVER] SSID #%d specified: '%s' (%s)\n", num+1, v.c_str(), ssids[num]);
           if (strcmp(ssids[num], v.c_str()) != 0) {
             restartWifi = true;
           }
@@ -541,8 +653,14 @@ void setupWebServer() {
         strlcpy(ntpServer2, v.c_str(), sizeof(ntpServer2));
       } else if (n == "timeZone") {
         strlcpy(timeZone, v.c_str(), sizeof(timeZone));
+        setTimeZone(timeZone);
       } else if (n == "mdns") {
-        strlcpy(mdns, v.c_str(), sizeof(mdns));
+        if (strcmp(mdns, v.c_str()) != 0) {
+          strlcpy(mdns, v.c_str(), sizeof(mdns));
+          startMDNS();
+        } else {
+          strlcpy(mdns, v.c_str(), sizeof(mdns));
+        }
       } else if (n == "countupdownDate") {
         countupdownDateStr = v;
       } else if (n == "countupdownTime") {
@@ -566,18 +684,26 @@ void setupWebServer() {
 
       countupdownTargetTimestamp = mktime(&tm);
       if (countupdownTargetTimestamp == (time_t)-1) {
-        Serial.println("[WEBSERVER] Error converting countupdown date/time to timestamp.");
+#if DEBUG==true
+        Serial.println(F("[WEBSERVER] Error converting countupdown date/time to timestamp."));
+#endif
         countupdownTargetTimestamp = 0;
-      } else {
-        Serial.printf("[WEBSERVER] Converted countupdown target: %s %s -> %lld\n", countupdownDateStr.c_str(), countupdownTimeStr.c_str(), countupdownTargetTimestamp);
       }
+#if DEBUG==true
+      else {
+        Serial.print(F("[WEBSERVER] Converted countupdown target: "));
+        Serial.printf("%s %s -> %lld\n", countupdownDateStr.c_str(), countupdownTimeStr.c_str(), countupdownTargetTimestamp);
+      }
+#endif
     }
 
     String msg = saveConfig();
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
     } else {
+#if DEBUG==true
       Serial.println(F("[WEBSERVER] Config saved successful."));
+#endif
       JsonDocument okDoc;
       okDoc[F("message")] = "Saved successfully.";
       String response;
@@ -587,18 +713,24 @@ void setupWebServer() {
 
     request->onDisconnect([restartWifi]() {
       if (restartWifi) {
+#if DEBUG==true
         Serial.println(F("[WEBSERVER] WiFi information changed, restarting WiFi."));
+#endif
         connectWiFi();
       }
     });
   });
 
   server.on("/restore", HTTP_POST, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /restore"));
+#endif
     if (LittleFS.exists("/config.bak")) {
       File src = LittleFS.open("/config.bak", "r");
       if (!src) {
+#if DEBUG==true
         Serial.println(F("[WEBSERVER] Failed to open /config.bak"));
+#endif
         JsonDocument errorDoc;
         errorDoc[F("error")] = "Failed to open backup file.";
         String response;
@@ -609,7 +741,9 @@ void setupWebServer() {
       File dst = LittleFS.open("/config.json", "w");
       if (!dst) {
         src.close();
+#if DEBUG==true
         Serial.println(F("[WEBSERVER] Failed to open /config.json for writing"));
+#endif
         JsonDocument errorDoc;
         errorDoc[F("error")] = "Failed to open config for writing.";
         String response;
@@ -630,11 +764,15 @@ void setupWebServer() {
       serializeJson(okDoc, response);
       request->send(200, "application/json", response);
       request->onDisconnect([]() {
+#if DEBUG==true
         Serial.println(F("[WEBSERVER] Rebooting after restore..."));
+#endif
         ESP.restart();
       });
     } else {
+#if DEBUG==true
       Serial.println(F("[WEBSERVER] No backup found"));
+#endif
       JsonDocument errorDoc;
       errorDoc[F("error")] = "No backup found.";
       String response;
@@ -644,35 +782,42 @@ void setupWebServer() {
   });
 
   server.on("/clear_wifi", HTTP_POST, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /clear_wifi"));
-
+#endif
     for (int i=0;i<10;i++) {
       strlcpy(ssids[i], "", sizeof(ssids[i]));
       strlcpy(passwords[i], "", sizeof(passwords[i]));
     }
     String msg = saveConfig();
     if (msg.length() > 0) {
+#if DEBUG==true
       Serial.println(F("[CLEARWIFI] Error saving cleared WiFi credentials."));
+#endif
       request->send(500, "application/json", msg);
       return;
     }
+#if DEBUG==true
     Serial.println(F("[CLEARWIFI] WiFi credentials cleared."));
-
+#endif
     JsonDocument okDoc;
     okDoc[F("message")] = "✅ WiFi credentials cleared! Restarting WiFi...";
     String response;
     serializeJson(okDoc, response);
     request->send(200, "application/json", response);
-
     request->onDisconnect([]() {
+#if DEBUG==true
       Serial.println(F("[WEBSERVER] Restarting WiFi connection..."));
+#endif
       connectWiFi();
     });
   });
   
   server.on("/ap_status", HTTP_GET, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
     Serial.print(F("[WEBSERVER] Request: /ap_status. isAPMode = "));
     Serial.println(wifiState == WIFI_APMODE);
+#endif
     String json = "{\"isAP\": ";
     json += (wifiState == WIFI_APMODE) ? "true" : "false";
     json += "}";
@@ -680,6 +825,9 @@ void setupWebServer() {
   });
 
   server.on("/set_brightness", HTTP_POST, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /set_brightness"));
+#endif
     if (!request->hasParam("value", true)) {
       request->send(400, "application/json", "{\"error\":\"Missing value\"}");
       return;
@@ -687,10 +835,12 @@ void setupWebServer() {
     int newBrightness = request->getParam("value", true)->value().toInt();
 
     // Clamp brightness to valid range
-    if (newBrightness < 1) newBrightness = 1;
-    if (newBrightness > 15) newBrightness = 15;
-    
-    Serial.printf("[WEBSERVER] Setting brightness to %d from %d\n", newBrightness, brightness);
+    if (newBrightness < 1) { newBrightness = 1; }
+    if (newBrightness > 15) { newBrightness = 15; }
+#if DEBUG==true
+    Serial.print(F("[WEBSERVER] Setting brightness to "));
+    Serial.println(newBrightness);
+#endif
     brightness = newBrightness;
     P.setIntensity(brightness);
     String msg = saveConfig();
@@ -702,6 +852,9 @@ void setupWebServer() {
   });
 
   server.on("/set_flip", HTTP_POST, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /set_flip"));
+#endif
     bool flip = false;
     if (request->hasParam("value", true)) {
       String v = request->getParam("value", true)->value();
@@ -710,7 +863,32 @@ void setupWebServer() {
     flipDisplay = flip;
     P.setZoneEffect(0, flipDisplay, PA_FLIP_UD);
     P.setZoneEffect(0, flipDisplay, PA_FLIP_LR);
-    Serial.printf("[WEBSERVER] Set flipDisplay to %d\n", flipDisplay);
+#if DEBUG==true
+    Serial.print(F("[WEBSERVER] Set flipDisplay to "));
+    Serial.println(flipDisplay);
+#endif
+    String msg = saveConfig();
+    if (msg.length() > 0) {
+      request->send(500, "application/json", msg);
+      return;
+    }
+    request->send(200, "application/json", "{\"ok\":true}");
+  });
+
+  server.on("/set_twelvehour", HTTP_POST, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /set_twelvehour"));
+#endif
+    bool twelve = false;
+    if (request->hasParam("value", true)) {
+      String v = request->getParam("value", true)->value();
+      twelve = (v == "1" || v == "true" || v == "on");
+    }
+    twelveHour = twelve;
+#if DEBUG==true
+    Serial.print(F("[WEBSERVER] Set twelveHour to "));
+    Serial.println(twelveHour);
+#endif
     String msg = saveConfig();
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
@@ -720,18 +898,22 @@ void setupWebServer() {
   });
 
   server.on("/restart", HTTP_GET, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /restart"));
+#endif
     request->send(200, "application/json", "{\"ok\":true}");
     ESP.restart();
   });
 
   server.on("/set_countupdown", HTTP_POST, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /set_countupdown"));
+#endif
     if (!request->hasParam("DateTime", true)) {
       request->send(400, "application/json", "{\"error\":\"Missing value\"}");
       return;
     }
-
     String DateTimeStr = request->getParam("DateTime", true)->value();
-
     if (DateTimeStr.length() == 19) {
       struct tm tm;
       tm.tm_year = DateTimeStr.substring(0, 4).toInt() - 1900;
@@ -741,14 +923,19 @@ void setupWebServer() {
       tm.tm_min = DateTimeStr.substring(14, 16).toInt();
       tm.tm_sec = DateTimeStr.substring(17, 19).toInt();
       tm.tm_isdst = -1;
-
       countupdownTargetTimestamp = mktime(&tm);
       if (countupdownTargetTimestamp == (time_t)-1) {
+#if DEBUG==true
         Serial.println("[WEBSERVER] Error converting countupdown date/time to timestamp.");
+#endif
         countupdownTargetTimestamp = 0;
-      } else {
-        Serial.printf("[WEBSERVER] Converted countupdown target: %s -> %lld\n", DateTimeStr.c_str(), countupdownTargetTimestamp);
       }
+#if DEBUG==true
+      else {
+        Serial.print(F("[WEBSERVER] Converted countupdown target: "));
+        Serial.printf("%s -> %lld\n", DateTimeStr.c_str(), countupdownTargetTimestamp);
+      }
+#endif
       String msg = saveConfig();
       if (msg.length() > 0) {
         request->send(500, "application/json", msg);
@@ -761,7 +948,18 @@ void setupWebServer() {
   });
 
   server.on("/start", HTTP_GET, [](AsyncWebServerRequest *request) {
-    DateTime dtNow = rtc.now();
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /start"));
+#endif
+    DateTime dtNow;
+    if (rtcEnabled) {
+      dtNow = rtc.now();
+    } else {
+      time_t nowTime = time(nullptr);
+      struct tm timeInfo;
+      localtime_r(&nowTime, &timeInfo);
+      dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+    }
     countupdownTargetTimestamp = dtNow.unixtime();
     String msg = saveConfig();
     if (msg.length() > 0) {
@@ -772,6 +970,9 @@ void setupWebServer() {
   });
 
   server.on("/stop", HTTP_GET, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /stop"));
+#endif
     countupdownTargetTimestamp = 0;
     String msg = saveConfig();
     if (msg.length() > 0) {
@@ -782,6 +983,9 @@ void setupWebServer() {
   });
 
   server.on("/add_seconds", HTTP_POST, [](AsyncWebServerRequest *request){
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /add_seconds"));
+#endif
     if (!request->hasParam("seconds", true)) {
       request->send(400, "application/json", "{\"error\":\"Missing value\"}");
       return;
@@ -796,6 +1000,9 @@ void setupWebServer() {
   });
 
   server.on("/remove_seconds", HTTP_POST, [](AsyncWebServerRequest *request){
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /remove_seconds"));
+#endif
     if (!request->hasParam("seconds", true)) {
       request->send(400, "application/json", "{\"error\":\"Missing value\"}");
       return;
@@ -810,13 +1017,27 @@ void setupWebServer() {
   });
 
   server.on("/get_time", HTTP_GET, [](AsyncWebServerRequest *request){
-    DateTime dtNow = rtc.now();
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /get_time"));
+#endif
+    DateTime dtNow;
+    if (rtcEnabled) {
+      dtNow = rtc.now();
+    } else {
+      time_t nowTime = time(nullptr);
+      struct tm timeInfo;
+      localtime_r(&nowTime, &timeInfo);
+      dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+    }
     char dateTimeJson[48];
     snprintf(dateTimeJson, sizeof(dateTimeJson), "{\"time\":\"%04d-%02d-%02d %02d:%02d:%02d\"}", dtNow.year(), dtNow.month(), dtNow.day(), dtNow.hour(), dtNow.minute(), dtNow.second());
     request->send(200, "application/json", dateTimeJson);
   });
 
   server.on("/set_time", HTTP_POST, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /set_time"));
+#endif
     if (!request->hasParam("DateTime", true)) {
       request->send(400, "application/json", "{\"error\":\"Missing value\"}");
       return;
@@ -842,45 +1063,66 @@ void setupWebServer() {
       time_t newTime = mktime(&tm);
       if (newTime != (time_t)-1) {
         struct timeval newNow = {.tv_sec = newTime };
-        setenv("TZ", ianaToPosix(timeZone), 1);
-        tzset();
         settimeofday(&newNow, NULL);
+        setTimeZone(timeZone);
         time_t nowTime = time(nullptr);
         struct tm timeInfo;
         localtime_r(&nowTime, &timeInfo);
-        rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
+        if (rtcEnabled) {
+          rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
+        }
       }
     }
-    DateTime dtNow = rtc.now();
+    DateTime dtNow;
+    if (rtcEnabled) {
+      dtNow = rtc.now();
+    } else {
+      time_t nowTime = time(nullptr);
+      struct tm timeInfo;
+      localtime_r(&nowTime, &timeInfo);
+      dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+    }
     char dateTimeJson[48];
     snprintf(dateTimeJson, sizeof(dateTimeJson), "{\"time\":\"%04u-%02u-%02u %02u:%02u:%02u\"}", dtNow.year(), dtNow.month(), dtNow.day(), dtNow.hour(), dtNow.minute(), dtNow.second());
     request->send(200, "application/json", dateTimeJson);
   });
 
   server.on("/ntp_sync", HTTP_GET, [](AsyncWebServerRequest *request) {
-    if (ntpState == NTP_IDLE) {
-      startNTPSync(true, 0);
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /ntp_sync"));
+#endif
+    if (ntpState == NTP_IDLE || ntpState == NTP_SUCCESS) {
+      startNTPSync(true);
     }
     request->send(200, "application/json", "{\"ok\":true}");
   });
 
   server.begin();
+#if DEBUG==true
   Serial.println(F("[WEBSERVER] Web server started"));
+#endif
 }
 
-// -----------------------------------------------------------------------------
-// Main setup() and loop()
-// -----------------------------------------------------------------------------
+/*
+ * Main setup() and loop()
+ */
 void setup() {
   Serial.begin(115200);
   delay(10);
+#if DEBUG==true
   Serial.println(F("[SETUP] Starting setup..."));
+#endif
 
   // Check if RTC was found.
   if (!rtc.begin()) {
+#if DEBUG==true
     Serial.println(F("[SETUP] Unable to find RTC."));
+#endif
     rtcEnabled = false;
   } else {
+#if DEBUG==true
+    Serial.println(F("[SETUP] RTC found."));
+#endif
     rtcEnabled = true;
     if (rtc.lostPower()) {
       // Set time if new device or after a power loss.
@@ -893,38 +1135,45 @@ void setup() {
 #else
   if (!LittleFS.begin(true)) {
 #endif
-    Serial.println(F("[ERROR] LittleFS mount failed in setup! Halting."));
+#if DEBUG==true
+  Serial.println(F("[ERROR] LittleFS mount failed in setup! Halting."));
+#endif
     while (true) {
       delay(100);
       yield();
     }
   }
+#if DEBUG==true
   Serial.println(F("[SETUP] LittleFS file system mounted successfully."));
+#endif
 
   P.begin();  // Initialize Parola library
 
-  P.setCharSpacing(0);
+  P.setCharSpacing(1);
   P.setFont(mFactory);
   loadConfig();  // This function now has internal yields and prints
 
   P.setIntensity(brightness);
   P.setZoneEffect(0, flipDisplay, PA_FLIP_UD);
   P.setZoneEffect(0, flipDisplay, PA_FLIP_LR);
+#if DEBUG==true
   Serial.println(F("[SETUP] Parola (LED Matrix) initialized"));
+#endif
 
   connectWiFi();
   setupWebServer();
+  startMDNS();
+  startElegantOTA();
+#if DEBUG==true
   Serial.println(F("[SETUP] Setup complete"));
+#endif
   printConfigToSerial();
   lastColonBlink = millis();
-
-  Serial.println(F("[SETUP] Starting ElegantOTA."));
-  ElegantOTA.setAuth(ELEGANT_USER, ELEGANT_PASS);
-  ElegantOTA.begin(&server);
 }
 
 void loop() {
   uint32_t curMillis = millis();
+  // --- WiFi Connection State Machine ---
   switch (wifiState) {
     // Attempting to connect still.
     case WIFI_WORKING:
@@ -935,7 +1184,10 @@ void loop() {
         for (int i=wifiNetNum+1; i<10; i++) {
           wifiNetNum = i;
           if (strlen(ssids[i]) > 0) {
-            Serial.printf("[WIFI] Attempting to connect to : %s\n", ssids[i]);
+#if DEBUG==true
+          Serial.print(F("[WIFI] Attempting to connect to "));
+          Serial.println(ssids[i]);
+#endif
             WiFi.begin(ssids[i],passwords[i]);
             wifiLastTime = millis();
             break;
@@ -956,7 +1208,9 @@ void loop() {
       // potentially there is a network available that precedes
       // the disconnected network in the array
       if (curMillis >= wifiLastTime + wifiTimeout) {
+#if DEBUG==true
         Serial.println(F("[WIFI] WiFi disconnect timeout reached."));
+#endif
         connectWiFi();
       }
       break;
@@ -964,62 +1218,72 @@ void loop() {
       dnsServer.processNextRequest();
       // Try to reconnect to a network every apTimeout when in ap mode
       if (curMillis >= wifiLastTime + apTimeout) {
+#if DEBUG==true
         Serial.println(F("[WIFI] AP Mode timeout reached."));
+#endif
         connectWiFi();
       }
-      break;
     default:
+      // --- ElegantOTA ---
+      // Only try to run if we're connected or in AP mode.
+      ElegantOTA.loop();
       break;
   }
 
-  ElegantOTA.loop();
+  // --- NTP State Machine ---
+  if (wifiState == WIFI_CONNECTED) {
+    switch (ntpState) {
+      case NTP_SUCCESS:
+      case NTP_IDLE: {
+          // If RTC doesn't work, attempt to refresh NTP sync every hour.
+          if (!rtcEnabled  && (ntpLastTime == 0 || curMillis > ntpLastTime + ntpRefreshTime)) {
+            startNTPSync(false);
+          }
+        }
+        break;
+      case NTP_SYNCING: {
+          time_t lNow = time(nullptr);
+          if (lNow > 1000) {  // NTP sync successful
+  #if DEBUG==true
+            Serial.println(F("[TIME] NTP sync successful."));
+  #endif
+            ntpState = NTP_SUCCESS;
+            setTimeZone(timeZone);
+            if (rtcEnabled) {
+              #if DEBUG==true
+              Serial.println(F("[TIME] Adjusting RTC clock."));
+              #endif
+              struct tm timeInfo;
+              getLocalTime(&timeInfo);
+              rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
+            }
+          } else if (curMillis - ntpLastTime > ntpTimeout && ntpRetryCount < maxNtpRetries) {
+            #if DEBUG==true
+            Serial.println(F("[TIME] NTP sync failed."));
+            #endif
+            ntpState = NTP_FAILED;
+          } else if (ntpRetryCount >= maxNtpRetries) {
+            ntpState = NTP_IDLE;
+          }
+        }
+        break;
+      case NTP_FAILED: {
+  #if DEBUG==true
+          Serial.println(F("[TIME] Retrying NTP sync..."));
+  #endif
+          startNTPSync(false, ntpRetryCount);
+        }
+        break;
+    }
+  }
 
-  static bool colonVisible = true;
-  const unsigned long colonBlinkInterval = 800;
-  if (millis() - lastColonBlink > colonBlinkInterval) {
+  // Colon is visible for 800 ms then not for 800 ms
+  if (curMillis - lastColonBlink > COLON_BLINK_INTERVAL) {
     colonVisible = !colonVisible;
     lastColonBlink = millis();
   }
 
-  // --- NTP State Machine ---
-  switch (ntpState) {
-    case NTP_IDLE:
-    case NTP_SUCCESS: {
-        // If RTC doesn't work, attempt to refresh NTP sync every hour.
-        if (!rtcEnabled  && (ntpLastTime == 0 || curMillis > ntpLastTime + ntpRefreshTime)) {
-          startNTPSync(false);
-        }
-      }
-      break;
-    case NTP_SYNCING: {
-        time_t lNow = time(nullptr);
-        if (lNow > 1000) {  // NTP sync successful
-          Serial.println(F("[TIME] NTP sync successful."));
-          ntpState = NTP_SUCCESS;
-          Serial.println(F("[TIME] Setting timezone then adjusting RTC clock."));
-          setenv("TZ", ianaToPosix(timeZone), 1);
-          tzset();
-          if (rtcEnabled) {
-            time_t nowTime = time(nullptr);
-            struct tm timeInfo;
-            localtime_r(&nowTime, &timeInfo);
-            rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
-          }
-        } else if (curMillis - ntpLastTime > ntpTimeout && ntpRetryCount < maxNtpRetries) {
-          Serial.println(F("[TIME] NTP sync failed."));
-          ntpState = NTP_FAILED;
-        } else if (ntpRetryCount >= maxNtpRetries) {
-          ntpState = NTP_IDLE;
-        }
-      }
-      break;
-    case NTP_FAILED: {
-        startNTPSync(false, ntpRetryCount);
-        Serial.println(F("[TIME] Retrying NTP sync..."));
-      }
-      break;
-  }
-
+  // Create DateTime object and set it via RTC or via (maybe) ntp synced clock.
   DateTime dtNow;
   if (rtcEnabled) {
     dtNow = rtc.now();
@@ -1030,36 +1294,45 @@ void loop() {
     dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
   }
   char timeWithSeconds[24];
-  if (countupdownTargetTimestamp > 0) { // --- COUNTUPDOWN Display Mode ---
+  // --- COUNTUPDOWN Display Mode ---
+  if (countupdownTargetTimestamp > 0) {
     long timeSeconds = countupdownTargetTimestamp - dtNow.unixtime();
     if (timeSeconds < 0) {
       timeSeconds = timeSeconds * -1;
     }
-    // Format the full string
-    if (colonVisible) {
-      snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%ld:%02ld:%02ld", timeSeconds / 3600, (timeSeconds % 3600) / 60, timeSeconds % 60);
+
+    if (timeSeconds < 1296000) { // less than 15 days
+      // Format the full string
+      if (colonVisible) {
+        snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%ld:%02ld:%02ld", timeSeconds / 3600, (timeSeconds % 3600) / 60, timeSeconds % 60);
+      } else {
+        snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%ld %02ld %02ld", timeSeconds / 3600, (timeSeconds % 3600) / 60, timeSeconds % 60);
+      }
+    } else if (timeSeconds < 31557600) { // less than 365.25 days / 1 year-ish
+      // display days-hours:minutes
+      if (colonVisible) {
+        snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%ld+%02ld:%02ld", timeSeconds / 86400, (timeSeconds % 86400) / 3600, (timeSeconds % 3600) / 60);
+      } else {
+        snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%ld^%02ld %02ld", timeSeconds / 86400, (timeSeconds % 86400) / 3600, (timeSeconds % 3600) / 60);
+      }
     } else {
-      snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%ld %02ld %02ld", timeSeconds / 3600, (timeSeconds % 3600) / 60, timeSeconds % 60);
+      if (colonVisible) {
+        snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%ld+%ld", timeSeconds / 31557600, (timeSeconds % 31557600) / 86400);
+      } else {
+        snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%ld^%ld", timeSeconds / 31557600, (timeSeconds % 31557600) / 86400);
+      }
     }
   }  // End COUNTUPDOWN Display Mode
-  else { // --- CLOCK Display Mode ---
-    snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%02d:%02d:%02d", dtNow.hour(), dtNow.minute(), dtNow.second());
-  } // End CLOCK Display Mode
-  // keep spacing logic the same ---
-  char timeSpacedStr[24];
-  int j = 0;
-  for (int i = 0; timeWithSeconds[i] != '\0'; i++) {
-    timeSpacedStr[j++] = timeWithSeconds[i];
-    if (timeWithSeconds[i + 1] != '\0') {
-      timeSpacedStr[j++] = ' ';
+  // --- CLOCK Display Mode ---
+  else {
+    if (twelveHour) {
+      uint8_t hour = dtNow.hour() % 12;
+      snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%d:%02d:%02d", hour == 0 ? 12 : hour, dtNow.minute(), dtNow.second());
+    } else {
+      snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%02d:%02d:%02d", dtNow.hour(), dtNow.minute(), dtNow.second());
     }
-  }
-  timeSpacedStr[j] = '\0';
-  // build final string ---
-  String formattedTime = String(timeSpacedStr);
-  // --- DISPLAY COUNTUPDOWN ---
-  P.setCharSpacing(0);
+  } // End CLOCK Display Mode
   P.setTextAlignment(PA_CENTER);
-  P.print(formattedTime);
+  P.print(timeWithSeconds);
   yield();
 }

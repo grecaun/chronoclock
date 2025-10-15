@@ -458,6 +458,13 @@
   <h2>Display Settings</h2>
   <div class="toggles" style="padding: 0 1rem;">
     <label style="display: flex; align-items: center; margin-top: 1.75rem; justify-content: space-between;">
+      <span style="margin-right: 0.5em;">12 Hour Clock:</span>
+      <span class="toggle-switch">
+        <input type="checkbox" id="twelveHour" name="twelveHour" onchange="setTwelveHour(this.checked)">
+        <span class="toggle-slider"></span>
+      </span>
+    </label>
+    <label style="display: flex; align-items: center; margin-top: 1.75rem; justify-content: space-between;">
       <span style="margin-right: 0.5em;">Flip Display (180°):</span>
       <span class="toggle-switch">
         <input type="checkbox" id="flipDisplay" name="flipDisplay" onchange="setFlipDisplay(this.checked)">
@@ -559,6 +566,7 @@
     <option value="Etc/GMT+1">Etc/GMT+1</option>
     <option value="Etc/GMT-1">Etc/GMT-1</option>
   </select>
+  <button style="margin-top: 1.75rem;" type="button" class="primary-button" onclick="syncNTP()">Sync Time (NTP)</button>
   <input style="margin-top: 1.75rem;" type="submit" class="primary-button" value="Save Settings">
 </form>
 
@@ -660,6 +668,7 @@ window.onload = function () {
       document.getElementById('brightnessSlider').value = typeof data.brightness !== "undefined" ? data.brightness : 10;
       document.getElementById('brightnessValue').textContent = document.getElementById('brightnessSlider').value;
       document.getElementById('flipDisplay').checked = !!data.flipDisplay;
+      document.getElementById('twelveHour').checked = !!data.twelveHour;
       document.getElementById('ntpServer1').value = data.ntpServer1 || "";
       document.getElementById('ntpServer2').value = data.ntpServer2 || "";
       document.getElementById('mdns').value = data.mdns || "";
@@ -734,9 +743,9 @@ async function submitConfig(event) {
   const form = document.getElementById('configForm');
   const formData = new FormData(form);
 
-  // Advanced: ensure correct values are set for advanced fields
   formData.set('brightness', document.getElementById('brightnessSlider').value);
   formData.set('flipDisplay', document.getElementById('flipDisplay').checked ? 'on' : '');
+  formData.set('twelveHour', document.getElementById('twelveHour').checked ? 'on' : '');
 
   const params = new URLSearchParams();
   for (const pair of formData.entries()) {
@@ -773,46 +782,41 @@ async function submitConfig(event) {
     removeReloadButton();
     removeRestoreButton();
     if (isAPMode) {
-      updateSavingModal("✅ Settings saved successfully!<br><br>Rebooting the device now... ", false);
-      setTimeout(() => {        
+      updateSavingModal("✅ Settings saved successfully!<br><br>Device will connect to a specified network.", false);
+      setTimeout(() => {
         document.getElementById('configForm').style.display = 'none';
         document.querySelector('.footer').style.display = 'none';
         document.querySelector('html').style.height = '100vh';
         document.body.style.height = '100vh';
         document.getElementById('configForm').style.display = 'none';
-        updateSavingModal("✅ All done!<br>You can now close this tab safely.<br><br>Your device is now rebooting and connecting to your Wi-Fi. Its new IP address will appear on the display for future access.", false);
-      }, 5000);
+        updateSavingModal("✅ All done!<br>You can now close this tab safely.", false);
+      }, 3000);
       return;
-
     } else {
-      updateSavingModal("✅ Configuration saved successfully.<br><br>Device will reboot", false);
+      updateSavingModal("✅ Configuration saved successfully.", false);
       setTimeout(() => location.href = location.href.split('#')[0], 3000);
     }
   })
   .catch(err => {
     isSaving = false;
-
     if (isAPMode && err.message.includes("Failed to fetch")) {
       console.warn("Expected disconnect in AP mode after reboot.");
       showSavingModal("");
-      updateSavingModal("✅ Settings saved successfully!<br><br>Rebooting the device now... ", false);
+      updateSavingModal("✅ Settings saved successfully!<br><br>Device will connect to a specified network.", false);
       setTimeout(() => {
         document.getElementById('configForm').style.display = 'none'; 
-        updateSavingModal("✅ All done!<br>You can now close this tab safely.<br><br>Your device is now rebooting and connecting to your Wi-Fi. Its new IP address will appear on the display for future access.", false);
-      }, 5000);
+        updateSavingModal("✅ All done!<br>You can now close this tab safely.", false);
+      }, 3000);
       removeReloadButton();
       removeRestoreButton();
       return;
     }
-
     console.error('Save error:', err);
     let friendlyMessage = "⚠️ Something went wrong while saving the configuration.";
     if (err.message.includes("Failed to fetch")) {
       friendlyMessage = "⚠️ Cannot connect to the device.<br>Is it powered on and connected?";
     }
-
     updateSavingModal(`${friendlyMessage}<br><br>Details: ${err.message}`, false);
-
     // Show only one action button, based on error content
     removeReloadButton();
     removeRestoreButton();
@@ -965,6 +969,42 @@ function setFlipDisplay(val) {
     method: 'POST',
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: "value=" + (val ? 1 : 0)
+  });
+}
+
+function setTwelveHour(val) {
+  fetch('/set_twelvehour', {
+    method: 'POST',
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "value=" + (val ? 1 : 0)
+  });
+
+}
+function syncNTP() {
+  fetch('/ntp_sync', {
+    method: 'GET'
+  })
+  .then(response => {
+    showSavingModal("");
+    if (!response.ok) {
+      updateSavingModal("⚠️ Something went wrong trying to synchronize the time.", false)
+      removeReloadButton();
+      removeRestoreButton();
+      setTimeout(() => location.href = location.href.split('#')[0], 3000);
+      return;
+    }
+    updateSavingModal("✅ All done!<br>Time will be synchronized with NTP servers.", false)
+    removeReloadButton();
+    removeRestoreButton();
+    setTimeout(() => location.href = location.href.split('#')[0], 3000);
+    return;
+  })
+  .catch(err => {
+      updateSavingModal(`⚠️ Something went wrong trying to synchronize the time.<br><br>${err.message}`, false)
+      removeReloadButton();
+      removeRestoreButton();
+      setTimeout(() => location.href = location.href.split('#')[0], 3000);
+      return;
   });
 }
 </script>

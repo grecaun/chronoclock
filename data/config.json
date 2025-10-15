@@ -6,7 +6,8 @@
   "passwords": ["","","","","","","","","",""],
   "timeZone": "",
   "brightness": 1,
-  "flipDisplay": true,
+  "flipDisplay": false,
+  "twelveHour": true,
   "ntpServer1": "pool.ntp.org",
   "ntpServer2": "time.nist.gov",
   "countupdown": {
