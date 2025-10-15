@@ -6,11 +6,11 @@
 <title>Chrono Clock Settings</title>
 <style>
   :root{
-    --accent-color: #0075ff;
+    --accent-color: #c80039;
   }
   * { box-sizing: border-box; }
   html{
-    background: radial-gradient(ellipse at 70% 0%, #2b425a 0%, #171e23 100%);  
+    background: radial-gradient(ellipse at 70% 0%, #36122c 0%, #1d0e17 100%);  
     height: 100%;
   }
   body {
@@ -50,20 +50,20 @@
   }
 
   .logo svg{
-    filter: drop-shadow(0px 0px 0.5rem #1ec7fa);
+    filter: drop-shadow(0px 0px 0.5rem #c80039);
     width: 100%;
     height: auto;
-    color: #c2f0ff;
+    color: #ffd2f0;
     margin: 0.5rem 0;
   }
   form {
     display: flex; flex-direction: column;
     max-width: 575px; margin: 0 auto;
-    background: linear-gradient(120deg, rgba(45,65,90,0.72) 0%, rgba(53,133,183,0.38) 100%); 
+    background: linear-gradient(120deg, rgba(83, 34, 56, 0.72) 0%, rgba(183, 53, 133, 0.38) 100%); 
     padding: 1.5rem;
     border-radius: 24px;
-    box-shadow: 0 10px 36px 0 rgba(40,170,255,0.11), 0 2px 8px 0 rgba(44, 70, 110, 0.08);
-    border: 1.5px solid rgba(180, 230, 255, 0.10)
+    box-shadow: 0 10px 36px 0 rgba(255, 40, 170, 0.25), 0 2px 8px 0 rgba(110, 44, 70, 0.18);
+    border: 1.5px solid rgba(255, 180, 230, 0.1)
   }  
   label {
     font-size: 0.9rem; 
@@ -76,9 +76,9 @@
   input[type="date"],
   input[type="number"], select {
     width: 100%; padding: 0.75rem;
-    border: 1.5px solid rgba(180, 230, 255, 0.08);
+    border: 1.5px solid rgba(255, 180, 230, 0.08);
     border-radius: 8px;
-    background-color: rgba(225,245,255,0.07); 
+    background-color: rgba(255, 225, 245, 0.07); 
     color: #ffffff;
     font-size: 1rem; appearance: none;
   }
@@ -91,13 +91,13 @@
   }
 
   input[type="submit"] {
-    background-color: #007aff; color: white;
+    background-color: #ff007a; color: white;
     padding: 0.9rem; font-size: 1rem;
     border: none; border-radius: 8px;
     cursor: pointer; transition: background-color 0.2s ease-in-out;
   }
   input[type="submit"]:hover {
-    background-color: #005ecb;
+    background-color: #cb005e;
   }
 
   input[type="time"]::-webkit-calendar-picker-indicator, input[type="date"]::-webkit-calendar-picker-indicator{
@@ -118,10 +118,10 @@
   input:-webkit-autofill,
   input:-webkit-autofill:focus,
   input:-webkit-autofill:hover {
-    background: rgba(225,245,255,0.07) !important;
+    background: rgba(225,255,245,0.07) !important;
     color: #fff !important;
-    -webkit-box-shadow: 0 0 0 1000px rgba(225,245,255,0.07) inset !important;
-    box-shadow: 0 0 0 1000px rgba(225,245,255,0.07) inset !important;
+    -webkit-box-shadow: 0 0 0 1000px rgba(225,255,245,0.07) inset !important;
+    box-shadow: 0 0 0 1000px rgba(225,255,245,0.07) inset !important;
     -webkit-text-fill-color: #fff !important;
     transition: background 9999s ease-in-out 0s;
   }
@@ -165,7 +165,7 @@
   }
 
   .primary-button {
-    background: linear-gradient(90deg, #3e99bc, #47add4 85%);
+    background: linear-gradient(90deg, #c80039, #ff0075 85%);
     color: white;
     padding: 0.9rem; font-size: 1rem; font-weight: 600;
     border: none; border-radius: 8px;
@@ -174,7 +174,7 @@
   }
   .primary-button:hover {
     transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(0, 122, 255, 0.35);
+    box-shadow: 0 6px 16px rgba(255, 0, 122, 0.35);
   }
   .primary-button:active {
     transform: scale(0.97); 
@@ -189,22 +189,22 @@
     backdrop-filter: blur(5px);
     position: fixed; top: 0; left: 0;
     width: 100%; height: 100%;
-    background: radial-gradient(ellipse at 70% 0%, hsl(210.64deg 35.34% 26.08% / 60%) 0%, #171e2399 100%);
+    background: radial-gradient(ellipse at 70% 0%, #5a2b4299 0%, #23171e99 100%);
     display: none; justify-content: center; align-items: center;
     z-index: 1000;
   }
   #savingModalContent {
-    background: linear-gradient(120deg, rgb(45 65 90) 0%, rgb(53 133 183 / 44%) 100%);
+    background: linear-gradient(120deg, rgb(90 45 65) 0%, rgb(183 53 133 / 44%) 100%);
     border-radius: 12px;
-    box-shadow: 0 10px 36px 0 rgba(40, 170, 255, 0.11), 0 2px 8px 0 rgba(44, 70, 110, 0.08);
-    border: 1.5px solid rgba(180, 230, 255, 0.10);
+    box-shadow: 0 10px 36px 0 rgba(255, 40, 170, 0.11), 0 2px 8px 0 rgba(110, 44, 70, 0.08);
+    border: 1.5px solid rgba(255, 180, 230, 0.10);
     margin: 1.5rem;
     padding: 2rem 2.5rem;
     text-align: center;
   }  
   .spinner {
     border: 4px solid rgba(255, 255, 255, 0.2);
-    border-top: 4px solid #007aff;
+    border-top: 4px solid #ff007a;
     border-radius: 50%;
     width: 36px; height: 36px;
     animation: spin 1s linear infinite;
