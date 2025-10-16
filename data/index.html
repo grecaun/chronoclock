@@ -1053,7 +1053,7 @@ function sendAddSeconds(val) {
     body: "seconds=" + val
   })
   .then(response => {
-    if (!response.ok) {
+    if (!response.ok && response.status !== 409) {
       return response.json().then(json => {
         throw new Error(`Server error ${response.status}: ${json.error}`);
       });
@@ -1061,8 +1061,17 @@ function sendAddSeconds(val) {
     return response.json();
   })
   .then(json => {
-    console.log(json);
-    if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
+    if (json.error) {
+      if (json.error.includes("locked")) {
+        updateSavingModal("⚠️ Count up/down locked.", false)
+      } else {
+        updateSavingModal("⚠️ Count up/down not set.", false)
+      }
+      removeReloadButton();
+      removeRestoreButton();
+      setTimeout(hideSavingModal, 1000);
+      return;
+    } else if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
       // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
       const targetDate = new Date(json.countupdownTimeStamp * 1000);
       const year = targetDate.getUTCFullYear();
@@ -1083,14 +1092,14 @@ function sendAddSeconds(val) {
     removeReloadButton();
     removeRestoreButton();
     updateSavingModal("✅ All done!<br>Count Up/Down should have been adjusted.", false)
-    setTimeout(hideSavingModal(), 3000);
+    setTimeout(hideSavingModal, 1000);
     return;
   })
   .catch(err => {
     removeReloadButton();
     removeRestoreButton();
     updateSavingModal(`⚠️ Something went wrong trying to adjust the Count Up/Down.<br><br>${err.message}`, false)
-    setTimeout(hideSavingModal(), 3000);
+    setTimeout(hideSavingModal, 2000);
     return;
   });
 }
@@ -1103,7 +1112,7 @@ function sendRemoveSeconds(val) {
     body: "seconds=" + val
   })
   .then(response => {
-    if (!response.ok) {
+    if (!response.ok && response.status !== 409) {
       return response.json().then(json => {
         throw new Error(`Server error ${response.status}: ${json.error}`);
       });
@@ -1111,7 +1120,17 @@ function sendRemoveSeconds(val) {
     return response.json();
   })
   .then(json => {
-    if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
+    if (json.error) {
+      if (json.error.includes("locked")) {
+        updateSavingModal("⚠️ Count up/down locked.", false)
+      } else {
+        updateSavingModal("⚠️ Count up/down not set.", false)
+      }
+      removeReloadButton();
+      removeRestoreButton();
+      setTimeout(hideSavingModal, 1000);
+      return;
+    } else if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
       // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
       const targetDate = new Date(json.countupdownTimeStamp * 1000);
       const year = targetDate.getUTCFullYear();
@@ -1132,14 +1151,14 @@ function sendRemoveSeconds(val) {
     removeReloadButton();
     removeRestoreButton();
     updateSavingModal("✅ All done!<br>Count Up/Down should have been adjusted.", false)
-    setTimeout(hideSavingModal(), 3000);
+    setTimeout(hideSavingModal, 1000);
     return;
   })
   .catch(err => {
     removeReloadButton();
     removeRestoreButton();
     updateSavingModal(`⚠️ Something went wrong trying to adjust the Count Up/Down.<br><br>${err.message}`, false)
-    setTimeout(hideSavingModal(), 3000);
+    setTimeout(hideSavingModal, 2000);
     return;
   });
 }
@@ -1150,7 +1169,7 @@ function sendStopCountUpDown() {
     method: 'GET'
   })
   .then(response => {
-    if (!response.ok) {
+    if (!response.ok && response.status !== 409) {
       return response.json().then(json => {
         throw new Error(`Server error ${response.status}: ${json.error}`);
       });
@@ -1158,7 +1177,17 @@ function sendStopCountUpDown() {
     return response.json();
   })
   .then(json => {
-    if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
+    if (json.error) {
+      if (json.error.includes("locked")) {
+        updateSavingModal("⚠️ Count up/down locked.", false)
+      } else {
+        updateSavingModal("⚠️ Count up/down not set.", false)
+      }
+      removeReloadButton();
+      removeRestoreButton();
+      setTimeout(hideSavingModal, 1000);
+      return;
+    } else if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
       // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
       const targetDate = new Date(json.countupdownTimeStamp * 1000);
       const year = targetDate.getUTCFullYear();
@@ -1179,14 +1208,14 @@ function sendStopCountUpDown() {
     removeReloadButton();
     removeRestoreButton();
     updateSavingModal("✅ All done!<br>Count Up/Down should have stopped.", false)
-    setTimeout(hideSavingModal(), 3000);
+    setTimeout(hideSavingModal, 2000);
     return;
   })
   .catch(err => {
     removeReloadButton();
     removeRestoreButton();
     updateSavingModal(`⚠️ Something went wrong trying to stop the Count Up/Down.<br><br>${err.message}`, false)
-    setTimeout(hideSavingModal(), 3000);
+    setTimeout(hideSavingModal, 2000);
     return;
   });
 }
@@ -1197,7 +1226,7 @@ function sendStartCountUpDown() {
     method: 'GET'
   })
   .then(response => {
-    if (!response.ok) {
+    if (!response.ok && response.status !== 409) {
       return response.json().then(json => {
         throw new Error(`Server error ${response.status}: ${json.error}`);
       });
@@ -1205,7 +1234,17 @@ function sendStartCountUpDown() {
     return response.json();
   })
   .then(json => {
-    if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
+    if (json.error) {
+      if (json.error.includes("locked")) {
+        updateSavingModal("⚠️ Count up/down locked.", false)
+      } else {
+        updateSavingModal("⚠️ Count up/down already started.", false)
+      }
+      removeReloadButton();
+      removeRestoreButton();
+      setTimeout(hideSavingModal, 1000);
+      return;
+    } else if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
       // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
       const targetDate = new Date(json.countupdownTimeStamp * 1000);
       const year = targetDate.getUTCFullYear();
@@ -1226,14 +1265,14 @@ function sendStartCountUpDown() {
     updateSavingModal("✅ All done!<br>Count Up should have started.", false)
     removeReloadButton();
     removeRestoreButton();
-    setTimeout(hideSavingModal(), 3000);
+    setTimeout(hideSavingModal, 2000);
     return;
   })
   .catch(err => {
       updateSavingModal(`⚠️ Something went wrong trying to start the Count Up.<br><br>${err.message}`, false)
       removeReloadButton();
       removeRestoreButton();
-      setTimeout(hideSavingModal(), 3000);
+      setTimeout(hideSavingModal, 2000);
       return;
   });
 }
@@ -1248,20 +1287,20 @@ function syncNTP() {
       updateSavingModal("⚠️ Something went wrong trying to synchronize the time.", false)
       removeReloadButton();
       removeRestoreButton();
-      setTimeout(hideSavingModal(), 3000);
+      setTimeout(hideSavingModal, 2000);
       return;
     }
     updateSavingModal("✅ All done!<br>Time will be synchronized with NTP servers.", false)
     removeReloadButton();
     removeRestoreButton();
-    setTimeout(hideSavingModal(), 3000);
+    setTimeout(hideSavingModal, 2000);
     return;
   })
   .catch(err => {
       updateSavingModal(`⚠️ Something went wrong trying to synchronize the time.<br><br>${err.message}`, false)
       removeReloadButton();
       removeRestoreButton();
-      setTimeout(hideSavingModal(), 3000);
+      setTimeout(hideSavingModal, 2000);
       return;
   });
 }
@@ -1276,20 +1315,20 @@ function sendRestart() {
       updateSavingModal("⚠️ Something went wrong trying to restart the device.", false)
       removeReloadButton();
       removeRestoreButton();
-      setTimeout(hideSavingModal(), 3000);
+      setTimeout(hideSavingModal, 2000);
       return;
     }
     updateSavingModal("✅ All done!<br>Device is restarting.", false)
     removeReloadButton();
     removeRestoreButton();
-    setTimeout(hideSavingModal(), 3000);
+    setTimeout(hideSavingModal, 2000);
     return;
   })
   .catch(err => {
       updateSavingModal(`⚠️ Something went wrong trying to restart the device.<br><br>${err.message}`, false)
       removeReloadButton();
       removeRestoreButton();
-      setTimeout(hideSavingModal(), 3000);
+      setTimeout(hideSavingModal, 2000);
       return;
   });
 }
