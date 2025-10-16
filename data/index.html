@@ -6,7 +6,7 @@
 <title>Chrono Clock Settings</title>
 <style>
   :root{
-    --accent-color: #c80039;
+    --accent-color: #ff007a;
   }
   * { box-sizing: border-box; }
   html{
@@ -145,6 +145,10 @@
     flex: 1;
   }
 
+  .form-row.any-col {
+    flex-direction: column;
+  }
+
   .form-row.three-col {
     flex-direction: column;
   }
@@ -165,7 +169,7 @@
   }
 
   .primary-button {
-    background: linear-gradient(90deg, #c80039, #ff0075 85%);
+    background: #ff007a;
     color: white;
     padding: 0.9rem; font-size: 1rem; font-weight: 600;
     border: none; border-radius: 8px;
@@ -250,8 +254,21 @@
     }
   }
 
+  .hidden {
+    display:none;
+  }
+
+  .visible {
+    display:flex;
+  }
+
   @media (min-width: 450px) {
     .form-row.two-col { 
+      flex-direction: row;
+      gap: 1rem;
+    }
+
+    .form-row.any-col {
       flex-direction: row;
       gap: 1rem;
     }
@@ -455,6 +472,41 @@
       <input type="time" step="1" id="countupdownTime" name="countupdownTime" class="form-control">
     </div>
   </div>
+  <div class="form-row">
+    <label style="display: flex; align-items: center; margin-top: 1.75rem; justify-content: space-between;">
+      <span style="margin-right: 0.5em;">Lock CountUpDown:</span>
+      <span class="toggle-switch">
+        <input type="checkbox" id="lockCountUpDown" name="lockCountUpDown" onchange="setLockCountUpDown(this.checked)">
+        <span class="toggle-slider"></span>
+      </span>
+    </label>
+  </div>
+  <div class="form-row two-col">
+    <div class="form-group">
+      <button style="margin-top: 1.75rem; width: 100%;" id="startCountUpDown" name="startCountUpDown" type="button" class="primary-button" onclick="sendStartCountUpDown()">Start Count Up</button>
+    </div>
+    <div class="form-group">
+      <button style="margin-top: 1.75rem; width: 100%;" id="stopCountUpDown" name="stopCountUpDown" type="button" class="primary-button" onclick="sendStopCountUpDown()">Stop Count Up/Down</button>
+    </div>
+  </div>
+  <div class="form-row any-col">
+    <div class="form-group" style="width: 100%;">
+      <label style="margin-top: 1.75rem;">Add <span id="addSecondsValue">1</span> Seconds</label>
+      <input style="width: 100%;" type="range" min="1" max="120" name="addSeconds" id="addSecondsSlider" value="1" oninput="addSecondsValue.textContent = (this.value);">
+    </div>
+    <div class="form-group" style="width:60px;">
+      <button style="margin-top: 1.75rem; width: 100%;" id="addSec" name="addSec" type="button" class="primary-button" onclick="sendAddSeconds(addSecondsSlider.value)">+</button>
+    </div>
+  </div>
+  <div class="form-row any-col">
+    <div class="form-group" style="width:100%;">
+      <label style="margin-top: 1.75rem;">Remove <span id="remSecondsValue">1</span> Seconds</label>
+      <input style="width: 100%;" type="range" min="1" max="120" name="remSeconds" id="remSecondsSlider" value="1" oninput="remSecondsValue.textContent = (this.value);">
+    </div>
+    <div class="form-group" style="width:60px;">
+      <button style="margin-top: 1.75rem; width: 100%;" id="stopCountUpDown" name="stopCountUpDown" type="button" class="primary-button" onclick="sendRemoveSeconds(remSecondsSlider.value)">-</button>
+    </div>
+  </div>
   <h2>Display Settings</h2>
   <div class="toggles" style="padding: 0 1rem;">
     <label style="display: flex; align-items: center; margin-top: 1.75rem; justify-content: space-between;">
@@ -568,6 +620,7 @@
   </select>
   <button style="margin-top: 1.75rem;" type="button" class="primary-button" onclick="syncNTP()">Sync Time (NTP)</button>
   <input style="margin-top: 1.75rem;" type="submit" class="primary-button" value="Save Settings">
+  <button style="margin-top: 1.75rem;" type="button" class="primary-button" onclick="sendRestart()">Restart</button>
 </form>
 
 <div id="savingMessage"></div>
@@ -665,32 +718,35 @@ window.onload = function () {
       document.getElementById('password7').value = data.passwords[7] || '';
       document.getElementById('password8').value = data.passwords[8] || '';
       document.getElementById('password9').value = data.passwords[9] || '';
+      document.getElementById('addSecondsSlider').value = 1;
+      document.getElementById('remSecondsSlider').value = 1;
       document.getElementById('brightnessSlider').value = typeof data.brightness !== "undefined" ? data.brightness : 10;
       document.getElementById('brightnessValue').textContent = document.getElementById('brightnessSlider').value;
       document.getElementById('flipDisplay').checked = !!data.flipDisplay;
       document.getElementById('twelveHour').checked = !!data.twelveHour;
+      document.getElementById('lockCountUpDown').checked = !!data.lockCountUpDown;
       document.getElementById('ntpServer1').value = data.ntpServer1 || "";
       document.getElementById('ntpServer2').value = data.ntpServer2 || "";
       document.getElementById('mdns').value = data.mdns || "";
 
       // --- Populate Countupdown Fields ---
       if (data.countupdown && data.countupdown.targetTimestamp) {
-          // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
-          const targetDate = new Date(data.countupdown.targetTimestamp * 1000);
-          const year = targetDate.getUTCFullYear();
-          // Month is 0-indexed in JS, so add 1
-          const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
-          const day = targetDate.getUTCDate().toString().padStart(2, '0');
-          const hours = targetDate.getUTCHours().toString().padStart(2, '0');
-          const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
-          const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
+        // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
+        const targetDate = new Date(data.countupdown.targetTimestamp * 1000);
+        const year = targetDate.getUTCFullYear();
+        // Month is 0-indexed in JS, so add 1
+        const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
+        const day = targetDate.getUTCDate().toString().padStart(2, '0');
+        const hours = targetDate.getUTCHours().toString().padStart(2, '0');
+        const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
+        const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
 
-          document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
-          document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
+        document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
+        document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
       } else {
-          // Clear fields if no target timestamp is set
-          document.getElementById('countupdownDate').value = '';
-          document.getElementById('countupdownTime').value = '';
+        // Clear fields if no target timestamp is set
+        document.getElementById('countupdownDate').value = '';
+        document.getElementById('countupdownTime').value = '';
       }
       // --- END Countupdown ---
 
@@ -746,6 +802,7 @@ async function submitConfig(event) {
   formData.set('brightness', document.getElementById('brightnessSlider').value);
   formData.set('flipDisplay', document.getElementById('flipDisplay').checked ? 'on' : '');
   formData.set('twelveHour', document.getElementById('twelveHour').checked ? 'on' : '');
+  formData.set('lockCountUpDown', document.getElementById('lockCountUpDown').checked ? 'on' : '');
 
   const params = new URLSearchParams();
   for (const pair of formData.entries()) {
@@ -978,8 +1035,209 @@ function setTwelveHour(val) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: "value=" + (val ? 1 : 0)
   });
-
 }
+
+function setLockCountUpDown(val) {
+  fetch('/set_lock', {
+    method: 'POST',
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "value=" + (val ? 1 : 0)
+  });
+}
+
+function sendAddSeconds(val) {
+  showSavingModal("Adding seconds...");
+  fetch('/add_seconds', {
+    method: 'POST',
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "seconds=" + val
+  })
+  .then(response => {
+    if (!response.ok) {
+      return response.json().then(json => {
+        throw new Error(`Server error ${response.status}: ${json.error}`);
+      });
+    }
+    return response.json();
+  })
+  .then(json => {
+    console.log(json);
+    if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
+      // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
+      const targetDate = new Date(json.countupdownTimeStamp * 1000);
+      const year = targetDate.getUTCFullYear();
+      // Month is 0-indexed in JS, so add 1
+      const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
+      const day = targetDate.getUTCDate().toString().padStart(2, '0');
+      const hours = targetDate.getUTCHours().toString().padStart(2, '0');
+      const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
+      const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
+
+      document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
+      document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
+    } else {
+      // Clear fields if no target timestamp is set
+      document.getElementById('countupdownDate').value = '';
+      document.getElementById('countupdownTime').value = '';
+    }
+    removeReloadButton();
+    removeRestoreButton();
+    updateSavingModal("✅ All done!<br>Count Up/Down should have been adjusted.", false)
+    setTimeout(hideSavingModal(), 3000);
+    return;
+  })
+  .catch(err => {
+    removeReloadButton();
+    removeRestoreButton();
+    updateSavingModal(`⚠️ Something went wrong trying to adjust the Count Up/Down.<br><br>${err.message}`, false)
+    setTimeout(hideSavingModal(), 3000);
+    return;
+  });
+}
+
+function sendRemoveSeconds(val) {
+  showSavingModal("Removing seconds...");
+  fetch('/remove_seconds', {
+    method: 'POST',
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "seconds=" + val
+  })
+  .then(response => {
+    if (!response.ok) {
+      return response.json().then(json => {
+        throw new Error(`Server error ${response.status}: ${json.error}`);
+      });
+    }
+    return response.json();
+  })
+  .then(json => {
+    if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
+      // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
+      const targetDate = new Date(json.countupdownTimeStamp * 1000);
+      const year = targetDate.getUTCFullYear();
+      // Month is 0-indexed in JS, so add 1
+      const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
+      const day = targetDate.getUTCDate().toString().padStart(2, '0');
+      const hours = targetDate.getUTCHours().toString().padStart(2, '0');
+      const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
+      const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
+
+      document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
+      document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
+    } else {
+      // Clear fields if no target timestamp is set
+      document.getElementById('countupdownDate').value = '';
+      document.getElementById('countupdownTime').value = '';
+    }
+    removeReloadButton();
+    removeRestoreButton();
+    updateSavingModal("✅ All done!<br>Count Up/Down should have been adjusted.", false)
+    setTimeout(hideSavingModal(), 3000);
+    return;
+  })
+  .catch(err => {
+    removeReloadButton();
+    removeRestoreButton();
+    updateSavingModal(`⚠️ Something went wrong trying to adjust the Count Up/Down.<br><br>${err.message}`, false)
+    setTimeout(hideSavingModal(), 3000);
+    return;
+  });
+}
+
+function sendStopCountUpDown() {
+  showSavingModal("Stopping Count Up/Down...");
+  fetch('/stop', {
+    method: 'GET'
+  })
+  .then(response => {
+    if (!response.ok) {
+      return response.json().then(json => {
+        throw new Error(`Server error ${response.status}: ${json.error}`);
+      });
+    }
+    return response.json();
+  })
+  .then(json => {
+    if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
+      // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
+      const targetDate = new Date(json.countupdownTimeStamp * 1000);
+      const year = targetDate.getUTCFullYear();
+      // Month is 0-indexed in JS, so add 1
+      const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
+      const day = targetDate.getUTCDate().toString().padStart(2, '0');
+      const hours = targetDate.getUTCHours().toString().padStart(2, '0');
+      const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
+      const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
+
+      document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
+      document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
+    } else {
+      // Clear fields if no target timestamp is set
+      document.getElementById('countupdownDate').value = '';
+      document.getElementById('countupdownTime').value = '';
+    }
+    removeReloadButton();
+    removeRestoreButton();
+    updateSavingModal("✅ All done!<br>Count Up/Down should have stopped.", false)
+    setTimeout(hideSavingModal(), 3000);
+    return;
+  })
+  .catch(err => {
+    removeReloadButton();
+    removeRestoreButton();
+    updateSavingModal(`⚠️ Something went wrong trying to stop the Count Up/Down.<br><br>${err.message}`, false)
+    setTimeout(hideSavingModal(), 3000);
+    return;
+  });
+}
+
+function sendStartCountUpDown() {
+  showSavingModal("Starting Count Up...");
+  fetch('/start', {
+    method: 'GET'
+  })
+  .then(response => {
+    if (!response.ok) {
+      return response.json().then(json => {
+        throw new Error(`Server error ${response.status}: ${json.error}`);
+      });
+    }
+    return response.json();
+  })
+  .then(json => {
+    if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
+      // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
+      const targetDate = new Date(json.countupdownTimeStamp * 1000);
+      const year = targetDate.getUTCFullYear();
+      // Month is 0-indexed in JS, so add 1
+      const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
+      const day = targetDate.getUTCDate().toString().padStart(2, '0');
+      const hours = targetDate.getUTCHours().toString().padStart(2, '0');
+      const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
+      const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
+
+      document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
+      document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
+    } else {
+      // Clear fields if no target timestamp is set
+      document.getElementById('countupdownDate').value = '';
+      document.getElementById('countupdownTime').value = '';
+    }
+    updateSavingModal("✅ All done!<br>Count Up should have started.", false)
+    removeReloadButton();
+    removeRestoreButton();
+    setTimeout(hideSavingModal(), 3000);
+    return;
+  })
+  .catch(err => {
+      updateSavingModal(`⚠️ Something went wrong trying to start the Count Up.<br><br>${err.message}`, false)
+      removeReloadButton();
+      removeRestoreButton();
+      setTimeout(hideSavingModal(), 3000);
+      return;
+  });
+}
+
 function syncNTP() {
   fetch('/ntp_sync', {
     method: 'GET'
@@ -990,20 +1248,48 @@ function syncNTP() {
       updateSavingModal("⚠️ Something went wrong trying to synchronize the time.", false)
       removeReloadButton();
       removeRestoreButton();
-      setTimeout(() => location.href = location.href.split('#')[0], 3000);
+      setTimeout(hideSavingModal(), 3000);
       return;
     }
     updateSavingModal("✅ All done!<br>Time will be synchronized with NTP servers.", false)
     removeReloadButton();
     removeRestoreButton();
-    setTimeout(() => location.href = location.href.split('#')[0], 3000);
+    setTimeout(hideSavingModal(), 3000);
     return;
   })
   .catch(err => {
       updateSavingModal(`⚠️ Something went wrong trying to synchronize the time.<br><br>${err.message}`, false)
       removeReloadButton();
       removeRestoreButton();
-      setTimeout(() => location.href = location.href.split('#')[0], 3000);
+      setTimeout(hideSavingModal(), 3000);
+      return;
+  });
+}
+
+function sendRestart() {
+  fetch('/restart', {
+    method: 'GET'
+  })
+  .then(response => {
+    showSavingModal("");
+    if (!response.ok) {
+      updateSavingModal("⚠️ Something went wrong trying to restart the device.", false)
+      removeReloadButton();
+      removeRestoreButton();
+      setTimeout(hideSavingModal(), 3000);
+      return;
+    }
+    updateSavingModal("✅ All done!<br>Device is restarting.", false)
+    removeReloadButton();
+    removeRestoreButton();
+    setTimeout(hideSavingModal(), 3000);
+    return;
+  })
+  .catch(err => {
+      updateSavingModal(`⚠️ Something went wrong trying to restart the device.<br><br>${err.message}`, false)
+      removeReloadButton();
+      removeRestoreButton();
+      setTimeout(hideSavingModal(), 3000);
       return;
   });
 }

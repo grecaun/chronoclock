@@ -27,7 +27,7 @@
 
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 #define MAX_DEVICES   4
-#define DEBUG         false
+#define DEBUG         true
 
 const char    *DEFAULT_AP_SSID      = "chronoclock";
 const char    *DEFAULT_AP_PASSWORD  = "chrono157";
@@ -91,6 +91,7 @@ char timeZone[64]      = "";
 int  brightness        = 10;
 bool flipDisplay       = false;
 bool twelveHour        = false;
+bool lockCountUpDown   = false;
 char ntpServer1[128]   = "pool.ntp.org";
 char ntpServer2[128]   = "time.nist.gov";
 
@@ -139,6 +140,7 @@ void loadConfig() {
     doc[F("brightness")] = brightness;
     doc[F("flipDisplay")] = flipDisplay;
     doc[F("twelveHour")] = twelveHour;
+    doc[F("lockCountUpDown")] = lockCountUpDown;
     doc[F("ntpServer1")] = ntpServer1;
     doc[F("ntpServer2")] = ntpServer2;
 
@@ -204,6 +206,7 @@ void loadConfig() {
   brightness = doc[F("brightness")] | 7;
   flipDisplay = doc[F("flipDisplay")] | false;
   twelveHour = doc[F("twelveHour")] | false;
+  lockCountUpDown = doc[F("lockCountUpDown")] | false;
   strlcpy(ntpServer1, doc[F("ntpServer1")] | "pool.ntp.org", sizeof(ntpServer1));
   strlcpy(ntpServer2, doc[F("ntpServer2")] | "time.nist.gov", sizeof(ntpServer2));
 
@@ -231,6 +234,7 @@ String saveConfig() {
     doc[F("brightness")] = brightness;
     doc[F("flipDisplay")] = flipDisplay;
     doc[F("twelveHour")] = twelveHour;
+    doc[F("lockCountUpDown")] = lockCountUpDown;
     doc[F("ntpServer1")] = ntpServer1;
     doc[F("ntpServer2")] = ntpServer2;
 
@@ -507,6 +511,10 @@ void printConfigToSerial() {
   Serial.println(brightness);
   Serial.print(F("Flip Display: "));
   Serial.println(flipDisplay ? "Yes" : "No");
+  Serial.print(F("12 Hour: "));
+  Serial.println(twelveHour ? "Yes" : "No");
+  Serial.print(F("CountUpDown Locked: "));
+  Serial.println(lockCountUpDown ? "Yes" : "No");
   Serial.print(F("NTP Server 1: "));
   Serial.println(ntpServer1);
   Serial.print(F("NTP Server 2: "));
@@ -905,6 +913,28 @@ void setupWebServer() {
     ESP.restart();
   });
 
+  server.on("/set_lock", HTTP_POST, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /set_lock"));
+#endif
+    bool lock = false;
+    if (request->hasParam("value", true)) {
+      String v = request->getParam("value", true)->value();
+      lock = (v == "1" || v == "true" || v == "on");
+    }
+    lockCountUpDown = lock;
+#if DEBUG==true
+    Serial.print(F("[WEBSERVER] Set lockCountUpDown to "));
+    Serial.println(flipDisplay);
+#endif
+    String msg = saveConfig();
+    if (msg.length() > 0) {
+      request->send(500, "application/json", msg);
+      return;
+    }
+    request->send(200, "application/json", "{\"ok\":true}");
+  });
+
   server.on("/set_countupdown", HTTP_POST, [](AsyncWebServerRequest *request) {
 #if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /set_countupdown"));
@@ -951,6 +981,14 @@ void setupWebServer() {
 #if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /start"));
 #endif
+    if (lockCountUpDown) {
+      request->send(409, "application/json", "{\"error\":\"CountUpDown locked.\"}"); // Conflict
+      return;
+    }
+    if (countupdownTargetTimestamp > 0) {
+      request->send(409, "application/json", "{\"error\":\"CountUpDown already running.\"}"); // Conflict
+      return;
+    }
     DateTime dtNow;
     if (rtcEnabled) {
       dtNow = rtc.now();
@@ -966,54 +1004,112 @@ void setupWebServer() {
       request->send(500, "application/json", msg);
       return;
     }
-    request->send(200, "application/json", "{\"ok\":true}");
+    char okMsg[128];
+    snprintf(okMsg, sizeof(okMsg), "{\"countupdownTimeStamp\":\"%lld\"}", countupdownTargetTimestamp);
+    request->send(200, "application/json", okMsg);
   });
 
   server.on("/stop", HTTP_GET, [](AsyncWebServerRequest *request) {
 #if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /stop"));
 #endif
+    if (lockCountUpDown) {
+      request->send(409, "application/json", "{\"error\":\"CountUpDown locked.\"}"); // Conflict
+      return;
+    }
+    if (countupdownTargetTimestamp < 1) {
+      request->send(409, "application/json", "{\"error\":\"CountUpDown not running.\"}"); // Conflict
+      return;
+    }
     countupdownTargetTimestamp = 0;
     String msg = saveConfig();
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
       return;
     }
-    request->send(200, "application/json", "{\"ok\":true}");
+    char okMsg[128];
+    snprintf(okMsg, sizeof(okMsg), "{\"countupdownTimeStamp\":\"%lld\"}", countupdownTargetTimestamp);
+    request->send(200, "application/json", okMsg);
   });
 
   server.on("/add_seconds", HTTP_POST, [](AsyncWebServerRequest *request){
 #if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /add_seconds"));
 #endif
+    if (lockCountUpDown) {
+      request->send(409, "application/json", "{\"error\":\"CountUpDown locked.\"}"); // Conflict
+      return;
+    }
+    if (countupdownTargetTimestamp < 1) {
+      request->send(409, "application/json", "{\"error\":\"CountUpDown not set, unable to adjust.\"}"); // Conflict
+      return;
+    }
     if (!request->hasParam("seconds", true)) {
       request->send(400, "application/json", "{\"error\":\"Missing value\"}");
       return;
     }
-    countupdownTargetTimestamp += request->getParam("seconds", true)->value().toInt();
+    DateTime dtNow;
+    if (rtcEnabled) {
+      dtNow = rtc.now();
+    } else {
+      time_t nowTime = time(nullptr);
+      struct tm timeInfo;
+      localtime_r(&nowTime, &timeInfo);
+      dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+    }
+    int seconds = request->getParam("seconds", true)->value().toInt();
+    if (countupdownTargetTimestamp < dtNow.unixtime()) { // Count Up!
+      seconds = seconds * -1; // needs to be further in the past if in countup mode
+    }
+    countupdownTargetTimestamp += seconds;
     String msg = saveConfig();
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
       return;
     }
-    request->send(200, "application/json", "{\"ok\":true}");
+    char okMsg[128];
+    snprintf(okMsg, sizeof(okMsg), "{\"countupdownTimeStamp\":\"%lld\"}", countupdownTargetTimestamp);
+    request->send(200, "application/json", okMsg);
   });
 
   server.on("/remove_seconds", HTTP_POST, [](AsyncWebServerRequest *request){
 #if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /remove_seconds"));
 #endif
+    if (lockCountUpDown) {
+      request->send(409, "application/json", "{\"error\":\"CountUpDown locked.\"}"); // Conflict
+      return;
+    }
+    if (countupdownTargetTimestamp < 1) {
+      request->send(409, "application/json", "{\"error\":\"CountUpDown not set, unable to adjust.\"}"); // Conflict
+      return;
+    }
     if (!request->hasParam("seconds", true)) {
       request->send(400, "application/json", "{\"error\":\"Missing value\"}");
       return;
     }
-    countupdownTargetTimestamp -= request->getParam("seconds", true)->value().toInt();
+    DateTime dtNow;
+    if (rtcEnabled) {
+      dtNow = rtc.now();
+    } else {
+      time_t nowTime = time(nullptr);
+      struct tm timeInfo;
+      localtime_r(&nowTime, &timeInfo);
+      dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+    }
+    int seconds = request->getParam("seconds", true)->value().toInt();
+    if (countupdownTargetTimestamp < dtNow.unixtime()) { // Count Up!
+      seconds = seconds * -1; // needs to be closer to today if in countup
+    }
+    countupdownTargetTimestamp -= seconds;
     String msg = saveConfig();
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
       return;
     }
-    request->send(200, "application/json", "{\"ok\":true}");
+    char okMsg[128];
+    snprintf(okMsg, sizeof(okMsg), "{\"countupdownTimeStamp\":\"%lld\"}", countupdownTargetTimestamp);
+    request->send(200, "application/json", okMsg);
   });
 
   server.on("/get_time", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1108,7 +1204,7 @@ void setupWebServer() {
  */
 void setup() {
   Serial.begin(115200);
-  delay(10);
+  delay(500);
 #if DEBUG==true
   Serial.println(F("[SETUP] Starting setup..."));
 #endif
