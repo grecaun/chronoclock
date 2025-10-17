@@ -731,22 +731,7 @@ window.onload = function () {
 
       // --- Populate Countupdown Fields ---
       if (data.countupdownTimestamp) {
-        // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
-        const targetDate = new Date(data.countupdownTimestamp * 1000);
-        const year = targetDate.getUTCFullYear();
-        // Month is 0-indexed in JS, so add 1
-        const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
-        const day = targetDate.getUTCDate().toString().padStart(2, '0');
-        const hours = targetDate.getUTCHours().toString().padStart(2, '0');
-        const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
-        const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
-
-        document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
-        document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
-      } else {
-        // Clear fields if no target timestamp is set
-        document.getElementById('countupdownDate').value = '';
-        document.getElementById('countupdownTime').value = '';
+        updateCountUpDownBoxes(data.countupdownTimestamp);
       }
       // --- END Countupdown ---
 
@@ -1002,6 +987,27 @@ function hideSavingModal() {
   }
 }
 
+function updateCountUpDownBoxes(countupdownTimestamp) {
+  if (countupdownTimestamp && Number.isInteger(countupdownTimestamp) && countupdownTimestamp > 0) {
+    // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
+    const targetDate = new Date(countupdownTimestamp * 1000);
+    const year = targetDate.getFullYear();
+    // Month is 0-indexed in JS, so add 1
+    const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
+    const day = targetDate.getDate().toString().padStart(2, '0');
+    const hours = targetDate.getHours().toString().padStart(2, '0');
+    const minutes = targetDate.getMinutes().toString().padStart(2, '0');
+    const seconds = targetDate.getSeconds().toString().padStart(2, '0');
+
+    document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
+    document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
+  } else {
+    // Clear fields if no target timestamp is set
+    document.getElementById('countupdownDate').value = '';
+    document.getElementById('countupdownTime').value = '';
+  }
+}
+
 let brightnessDebounceTimeout = null;
 
 function setBrightnessLive(val) {
@@ -1071,23 +1077,8 @@ function sendAddSeconds(val) {
       removeRestoreButton();
       setTimeout(hideSavingModal, 1000);
       return;
-    } else if (json.countupdownTimestamp && Number.isInteger(json.countupdownTimestamp) && json.countupdownTimestamp > 0) {
-      // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
-      const targetDate = new Date(json.countupdownTimestamp * 1000);
-      const year = targetDate.getUTCFullYear();
-      // Month is 0-indexed in JS, so add 1
-      const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
-      const day = targetDate.getUTCDate().toString().padStart(2, '0');
-      const hours = targetDate.getUTCHours().toString().padStart(2, '0');
-      const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
-      const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
-
-      document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
-      document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
     } else {
-      // Clear fields if no target timestamp is set
-      document.getElementById('countupdownDate').value = '';
-      document.getElementById('countupdownTime').value = '';
+      updateCountUpDownBoxes(json.countupdownTimestamp);
     }
     removeReloadButton();
     removeRestoreButton();
@@ -1130,23 +1121,8 @@ function sendRemoveSeconds(val) {
       removeRestoreButton();
       setTimeout(hideSavingModal, 1000);
       return;
-    } else if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
-      // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
-      const targetDate = new Date(json.countupdownTimeStamp * 1000);
-      const year = targetDate.getFullYear();
-      // Month is 0-indexed in JS, so add 1
-      const month = (targetDate.getMonth() + 1).toString().padStart(2, '0');
-      const day = targetDate.getDate().toString().padStart(2, '0');
-      const hours = targetDate.getHours().toString().padStart(2, '0');
-      const minutes = targetDate.getMinutes().toString().padStart(2, '0');
-      const seconds = targetDate.getSeconds().toString().padStart(2, '0');
-
-      document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
-      document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
     } else {
-      // Clear fields if no target timestamp is set
-      document.getElementById('countupdownDate').value = '';
-      document.getElementById('countupdownTime').value = '';
+      updateCountUpDownBoxes(json.countupdownTimestamp);
     }
     removeReloadButton();
     removeRestoreButton();
@@ -1187,23 +1163,8 @@ function sendStopCountUpDown() {
       removeRestoreButton();
       setTimeout(hideSavingModal, 1000);
       return;
-    } else if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
-      // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
-      const targetDate = new Date(json.countupdownTimeStamp * 1000);
-      const year = targetDate.getUTCFullYear();
-      // Month is 0-indexed in JS, so add 1
-      const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
-      const day = targetDate.getUTCDate().toString().padStart(2, '0');
-      const hours = targetDate.getUTCHours().toString().padStart(2, '0');
-      const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
-      const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
-
-      document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
-      document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
     } else {
-      // Clear fields if no target timestamp is set
-      document.getElementById('countupdownDate').value = '';
-      document.getElementById('countupdownTime').value = '';
+      updateCountUpDownBoxes(json.countupdownTimestamp);
     }
     removeReloadButton();
     removeRestoreButton();
@@ -1244,23 +1205,8 @@ function sendStartCountUpDown() {
       removeRestoreButton();
       setTimeout(hideSavingModal, 1000);
       return;
-    } else if (json.countupdownTimeStamp && Number.isInteger(json.countupdownTimeStamp) && json.countupdownTimeStamp > 0) {
-      // Convert Unix timestamp (seconds) to milliseconds for JavaScript Date object
-      const targetDate = new Date(json.countupdownTimeStamp * 1000);
-      const year = targetDate.getUTCFullYear();
-      // Month is 0-indexed in JS, so add 1
-      const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
-      const day = targetDate.getUTCDate().toString().padStart(2, '0');
-      const hours = targetDate.getUTCHours().toString().padStart(2, '0');
-      const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
-      const seconds = targetDate.getUTCSeconds().toString().padStart(2, '0');
-
-      document.getElementById('countupdownDate').value = `${year}-${month}-${day}`;
-      document.getElementById('countupdownTime').value = `${hours}:${minutes}:${seconds}`;
     } else {
-      // Clear fields if no target timestamp is set
-      document.getElementById('countupdownDate').value = '';
-      document.getElementById('countupdownTime').value = '';
+      updateCountUpDownBoxes(json.countupdownTimestamp);
     }
     updateSavingModal("✅ All done!<br>Count Up should have started.", false)
     removeReloadButton();

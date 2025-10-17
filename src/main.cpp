@@ -1420,7 +1420,7 @@ void loop() {
 
   // Create DateTime object and set it via RTC or via (maybe) ntp synced clock.
   DateTime dtNow;
-  if (rtcEnabled) { // RTC will store UTC time.
+  if (rtcEnabled) { // RTC stores UTC time.
     dtNow = rtc.now();
   } else {
     dtNow = DateTime(time(nullptr));
