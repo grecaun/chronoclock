@@ -1177,13 +1177,17 @@ void setupWebServer() {
       return;
     }
     String DateTimeStr = request->getParam("DateTime", true)->value();
-    if (DateTimeStr.length() == 19) {
+    if (DateTimeStr.length() >= 19) {
       int year = DateTimeStr.substring(0, 4).toInt();
       int month = DateTimeStr.substring(5, 7).toInt();
       int day = DateTimeStr.substring(8, 10).toInt();
       int hour = DateTimeStr.substring(11, 13).toInt();
       int minute = DateTimeStr.substring(14, 16).toInt();
       int second = DateTimeStr.substring(17, 19).toInt();
+      int millisec = 0;
+      if (DateTimeStr.length() >= 23) {
+        millisec = DateTimeStr.substring(20,23).toInt();
+      }
 
       struct tm tm;
       tm.tm_year = year - 1900;
@@ -1196,7 +1200,7 @@ void setupWebServer() {
 
       time_t newTime = mktime(&tm);
       if (newTime != (time_t)-1) {
-        struct timeval newNow = {.tv_sec = newTime };
+        struct timeval newNow = {.tv_sec = newTime, .tv_usec = millisec*1000};
         settimeofday(&newNow, NULL);
         if (rtcEnabled) {
           time_t nowTime = time(nullptr);
