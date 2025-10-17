@@ -11,7 +11,5 @@
   "lockCountUpDown": false,
   "ntpServer1": "pool.ntp.org",
   "ntpServer2": "time.nist.gov",
-  "countupdown": {
-    "targetTimestamp": 0
-  }
+  "countupdownTimestamp": 0
 }

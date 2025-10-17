@@ -96,10 +96,10 @@ char ntpServer1[128]   = "pool.ntp.org";
 char ntpServer2[128]   = "time.nist.gov";
 
 // Globals
-bool          rtcEnabled                 = false;
-bool          colonVisible               = true;
-unsigned long lastColonBlink             = 0;
-time_t        countupdownTargetTimestamp = 0;  // Unix timestamp
+bool          rtcEnabled           = false;
+bool          colonVisible         = true;
+unsigned long lastColonBlink       = 0;
+time_t        countupdownTimestamp = 0;  // Unix timestamp
 
 // State management
 DNSServer dnsServer;
@@ -143,6 +143,7 @@ void loadConfig() {
     doc[F("lockCountUpDown")] = lockCountUpDown;
     doc[F("ntpServer1")] = ntpServer1;
     doc[F("ntpServer2")] = ntpServer2;
+    doc[F("countupdownTimestamp")] = 0;
 
     JsonArray ssidArray = doc[F("ssids")].to<JsonArray>();
     JsonArray pwdArray = doc[F("passwords")].to<JsonArray>();
@@ -150,10 +151,6 @@ void loadConfig() {
       ssidArray[i] = ssids[i];
       pwdArray[i] = passwords[i];
     }
-
-    // Add countupdown defaults when creating a new config.json
-    JsonObject countupdownObj = doc[F("countupdown")].to<JsonObject>();
-    countupdownObj[F("targetTimestamp")] = 0;
 
     File f = LittleFS.open("/config.json", "w");
     if (f) {
@@ -209,17 +206,7 @@ void loadConfig() {
   lockCountUpDown = doc[F("lockCountUpDown")] | false;
   strlcpy(ntpServer1, doc[F("ntpServer1")] | "pool.ntp.org", sizeof(ntpServer1));
   strlcpy(ntpServer2, doc[F("ntpServer2")] | "time.nist.gov", sizeof(ntpServer2));
-
-  // --- COUNTUPDOWN CONFIG LOADING ---
-  if (doc[F("countupdown")].is<JsonObject>()) {
-    JsonObject countupdownObj = doc[F("countupdown")];
-    countupdownTargetTimestamp = countupdownObj[F("targetTimestamp")] | 0;
-  } else {
-    countupdownTargetTimestamp = 0;
-#if DEBUG==true
-    Serial.println(F("[CONFIG] Countupdown object not found, defaulting to disabled."));
-#endif
-  }
+  countupdownTimestamp = doc[F("countupdownTimestamp")] | 0;
 #if DEBUG==true
   Serial.println(F("[CONFIG] Configuration loaded."));
 #endif
@@ -237,6 +224,7 @@ String saveConfig() {
     doc[F("lockCountUpDown")] = lockCountUpDown;
     doc[F("ntpServer1")] = ntpServer1;
     doc[F("ntpServer2")] = ntpServer2;
+    doc[F("countupdownTimestamp")] = countupdownTimestamp;
 
     JsonArray ssidArray = doc[F("ssids")].to<JsonArray>();
     JsonArray pwdArray = doc[F("passwords")].to<JsonArray>();
@@ -244,9 +232,6 @@ String saveConfig() {
       ssidArray[i] = ssids[i];
       pwdArray[i] = passwords[i];
     }
-
-    JsonObject countupdownObj = doc[F("countupdown")].to<JsonObject>();
-    countupdownObj[F("targetTimestamp")] = countupdownTargetTimestamp;
 
     if (LittleFS.exists("/config.json")) {
 #if DEBUG==true
@@ -505,8 +490,8 @@ void printConfigToSerial() {
     Serial.print(F(" - "));
     Serial.println(passwords[i]);
   }
-  Serial.print(F("TimeZone (IANA): "));
-  Serial.println(timeZone);
+  Serial.print(F("mDNS: "));
+  Serial.println(mdns);
   Serial.print(F("Brightness: "));
   Serial.println(brightness);
   Serial.print(F("Flip Display: "));
@@ -515,14 +500,14 @@ void printConfigToSerial() {
   Serial.println(twelveHour ? "Yes" : "No");
   Serial.print(F("CountUpDown Locked: "));
   Serial.println(lockCountUpDown ? "Yes" : "No");
+  Serial.print(F("Countupdown Target Timestamp: "));
+  Serial.println(countupdownTimestamp);
   Serial.print(F("NTP Server 1: "));
   Serial.println(ntpServer1);
   Serial.print(F("NTP Server 2: "));
   Serial.println(ntpServer2);
-  Serial.print(F("mDNS: "));
-  Serial.println(mdns);
-  Serial.print(F("Countupdown Target Timestamp: "));
-  Serial.println(countupdownTargetTimestamp);
+  Serial.print(F("TimeZone (IANA): "));
+  Serial.println(timeZone);
   Serial.println(F("========================================"));
   Serial.println();
 #endif
@@ -689,18 +674,17 @@ void setupWebServer() {
       tm.tm_min = countupdownTimeStr.substring(3, 5).toInt();
       tm.tm_sec = countupdownTimeStr.substring(6, 8).toInt();
       tm.tm_isdst = -1;
-
-      countupdownTargetTimestamp = mktime(&tm);
-      if (countupdownTargetTimestamp == (time_t)-1) {
+      countupdownTimestamp = mktime(&tm);
+      if (countupdownTimestamp == (time_t)-1) {
 #if DEBUG==true
         Serial.println(F("[WEBSERVER] Error converting countupdown date/time to timestamp."));
 #endif
-        countupdownTargetTimestamp = 0;
+        countupdownTimestamp = 0;
       }
 #if DEBUG==true
       else {
         Serial.print(F("[WEBSERVER] Converted countupdown target: "));
-        Serial.printf("%s %s -> %lld\n", countupdownDateStr.c_str(), countupdownTimeStr.c_str(), countupdownTargetTimestamp);
+        Serial.printf("%s %s -> %lld\n", countupdownDateStr.c_str(), countupdownTimeStr.c_str(), countupdownTimestamp);
       }
 #endif
     }
@@ -856,7 +840,15 @@ void setupWebServer() {
       request->send(500, "application/json", msg);
       return;
     }
-    request->send(200, "application/json", "{\"ok\":true}");
+    JsonDocument okDoc;
+    okDoc[F("brightness")] = brightness;
+    okDoc[F("flipDisplay")] = flipDisplay;
+    okDoc[F("twelveHour")] = twelveHour;
+    okDoc[F("lockCountUpDown")] = lockCountUpDown;
+    okDoc[F("countupdownTimestamp")] = countupdownTimestamp;
+    String response;
+    serializeJson(okDoc, response);
+    request->send(200, "application/json", response);
   });
 
   server.on("/set_flip", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -880,7 +872,15 @@ void setupWebServer() {
       request->send(500, "application/json", msg);
       return;
     }
-    request->send(200, "application/json", "{\"ok\":true}");
+    JsonDocument okDoc;
+    okDoc[F("brightness")] = brightness;
+    okDoc[F("flipDisplay")] = flipDisplay;
+    okDoc[F("twelveHour")] = twelveHour;
+    okDoc[F("lockCountUpDown")] = lockCountUpDown;
+    okDoc[F("countupdownTimestamp")] = countupdownTimestamp;
+    String response;
+    serializeJson(okDoc, response);
+    request->send(200, "application/json", response);
   });
 
   server.on("/set_twelvehour", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -902,7 +902,15 @@ void setupWebServer() {
       request->send(500, "application/json", msg);
       return;
     }
-    request->send(200, "application/json", "{\"ok\":true}");
+    JsonDocument okDoc;
+    okDoc[F("brightness")] = brightness;
+    okDoc[F("flipDisplay")] = flipDisplay;
+    okDoc[F("twelveHour")] = twelveHour;
+    okDoc[F("lockCountUpDown")] = lockCountUpDown;
+    okDoc[F("countupdownTimestamp")] = countupdownTimestamp;
+    String response;
+    serializeJson(okDoc, response);
+    request->send(200, "application/json", response);
   });
 
   server.on("/restart", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -925,14 +933,22 @@ void setupWebServer() {
     lockCountUpDown = lock;
 #if DEBUG==true
     Serial.print(F("[WEBSERVER] Set lockCountUpDown to "));
-    Serial.println(flipDisplay);
+    Serial.println(lockCountUpDown);
 #endif
     String msg = saveConfig();
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
       return;
     }
-    request->send(200, "application/json", "{\"ok\":true}");
+    JsonDocument okDoc;
+    okDoc[F("brightness")] = brightness;
+    okDoc[F("flipDisplay")] = flipDisplay;
+    okDoc[F("twelveHour")] = twelveHour;
+    okDoc[F("lockCountUpDown")] = lockCountUpDown;
+    okDoc[F("countupdownTimestamp")] = countupdownTimestamp;
+    String response;
+    serializeJson(okDoc, response);
+    request->send(200, "application/json", response);
   });
 
   server.on("/set_countupdown", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -953,17 +969,17 @@ void setupWebServer() {
       tm.tm_min = DateTimeStr.substring(14, 16).toInt();
       tm.tm_sec = DateTimeStr.substring(17, 19).toInt();
       tm.tm_isdst = -1;
-      countupdownTargetTimestamp = mktime(&tm);
-      if (countupdownTargetTimestamp == (time_t)-1) {
+      countupdownTimestamp = mktime(&tm);
+      if (countupdownTimestamp == (time_t)-1) {
 #if DEBUG==true
         Serial.println("[WEBSERVER] Error converting countupdown date/time to timestamp.");
 #endif
-        countupdownTargetTimestamp = 0;
+        countupdownTimestamp = 0;
       }
 #if DEBUG==true
       else {
         Serial.print(F("[WEBSERVER] Converted countupdown target: "));
-        Serial.printf("%s -> %lld\n", DateTimeStr.c_str(), countupdownTargetTimestamp);
+        Serial.printf("%s -> %lld\n", DateTimeStr.c_str(), countupdownTimestamp);
       }
 #endif
       String msg = saveConfig();
@@ -971,7 +987,14 @@ void setupWebServer() {
         request->send(500, "application/json", msg);
         return;
       }
-      request->send(200, "application/json", "{\"ok\":true}");
+      JsonDocument okDoc;
+      okDoc[F("flipDisplay")] = flipDisplay;
+      okDoc[F("twelveHour")] = twelveHour;
+      okDoc[F("lockCountUpDown")] = lockCountUpDown;
+      okDoc[F("countupdownTimestamp")] = countupdownTimestamp;
+      String response;
+      serializeJson(okDoc, response);
+      request->send(200, "application/json", response);
     } else {
       request->send(400, "application/json", "{\"error\":\"Invalid datetime\"}");
     }
@@ -985,28 +1008,29 @@ void setupWebServer() {
       request->send(409, "application/json", "{\"error\":\"CountUpDown locked.\"}"); // Conflict
       return;
     }
-    if (countupdownTargetTimestamp > 0) {
+    if (countupdownTimestamp > 0) {
       request->send(409, "application/json", "{\"error\":\"CountUpDown already running.\"}"); // Conflict
       return;
     }
-    DateTime dtNow;
     if (rtcEnabled) {
-      dtNow = rtc.now();
+      countupdownTimestamp = rtc.now().unixtime();
     } else {
-      time_t nowTime = time(nullptr);
-      struct tm timeInfo;
-      localtime_r(&nowTime, &timeInfo);
-      dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+      countupdownTimestamp = time(nullptr);
     }
-    countupdownTargetTimestamp = dtNow.unixtime();
     String msg = saveConfig();
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
       return;
     }
-    char okMsg[128];
-    snprintf(okMsg, sizeof(okMsg), "{\"countupdownTimeStamp\":\"%lld\"}", countupdownTargetTimestamp);
-    request->send(200, "application/json", okMsg);
+    JsonDocument okDoc;
+    okDoc[F("brightness")] = brightness;
+    okDoc[F("flipDisplay")] = flipDisplay;
+    okDoc[F("twelveHour")] = twelveHour;
+    okDoc[F("lockCountUpDown")] = lockCountUpDown;
+    okDoc[F("countupdownTimestamp")] = countupdownTimestamp;
+    String response;
+    serializeJson(okDoc, response);
+    request->send(200, "application/json", response);
   });
 
   server.on("/stop", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -1017,19 +1041,25 @@ void setupWebServer() {
       request->send(409, "application/json", "{\"error\":\"CountUpDown locked.\"}"); // Conflict
       return;
     }
-    if (countupdownTargetTimestamp < 1) {
+    if (countupdownTimestamp < 1) {
       request->send(409, "application/json", "{\"error\":\"CountUpDown not running.\"}"); // Conflict
       return;
     }
-    countupdownTargetTimestamp = 0;
+    countupdownTimestamp = 0;
     String msg = saveConfig();
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
       return;
     }
-    char okMsg[128];
-    snprintf(okMsg, sizeof(okMsg), "{\"countupdownTimeStamp\":\"%lld\"}", countupdownTargetTimestamp);
-    request->send(200, "application/json", okMsg);
+    JsonDocument okDoc;
+    okDoc[F("brightness")] = brightness;
+    okDoc[F("flipDisplay")] = flipDisplay;
+    okDoc[F("twelveHour")] = twelveHour;
+    okDoc[F("lockCountUpDown")] = lockCountUpDown;
+    okDoc[F("countupdownTimestamp")] = countupdownTimestamp;
+    String response;
+    serializeJson(okDoc, response);
+    request->send(200, "application/json", response);
   });
 
   server.on("/add_seconds", HTTP_POST, [](AsyncWebServerRequest *request){
@@ -1040,7 +1070,7 @@ void setupWebServer() {
       request->send(409, "application/json", "{\"error\":\"CountUpDown locked.\"}"); // Conflict
       return;
     }
-    if (countupdownTargetTimestamp < 1) {
+    if (countupdownTimestamp < 1) {
       request->send(409, "application/json", "{\"error\":\"CountUpDown not set, unable to adjust.\"}"); // Conflict
       return;
     }
@@ -1052,24 +1082,27 @@ void setupWebServer() {
     if (rtcEnabled) {
       dtNow = rtc.now();
     } else {
-      time_t nowTime = time(nullptr);
-      struct tm timeInfo;
-      localtime_r(&nowTime, &timeInfo);
-      dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+      dtNow = DateTime(time(nullptr));
     }
     int seconds = request->getParam("seconds", true)->value().toInt();
-    if (countupdownTargetTimestamp < dtNow.unixtime()) { // Count Up!
+    if (countupdownTimestamp < dtNow.unixtime()) { // Count Up!
       seconds = seconds * -1; // needs to be further in the past if in countup mode
     }
-    countupdownTargetTimestamp += seconds;
+    countupdownTimestamp += seconds;
     String msg = saveConfig();
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
       return;
     }
-    char okMsg[128];
-    snprintf(okMsg, sizeof(okMsg), "{\"countupdownTimeStamp\":\"%lld\"}", countupdownTargetTimestamp);
-    request->send(200, "application/json", okMsg);
+    JsonDocument okDoc;
+    okDoc[F("brightness")] = brightness;
+    okDoc[F("flipDisplay")] = flipDisplay;
+    okDoc[F("twelveHour")] = twelveHour;
+    okDoc[F("lockCountUpDown")] = lockCountUpDown;
+    okDoc[F("countupdownTimestamp")] = countupdownTimestamp;
+    String response;
+    serializeJson(okDoc, response);
+    request->send(200, "application/json", response);
   });
 
   server.on("/remove_seconds", HTTP_POST, [](AsyncWebServerRequest *request){
@@ -1080,7 +1113,7 @@ void setupWebServer() {
       request->send(409, "application/json", "{\"error\":\"CountUpDown locked.\"}"); // Conflict
       return;
     }
-    if (countupdownTargetTimestamp < 1) {
+    if (countupdownTimestamp < 1) {
       request->send(409, "application/json", "{\"error\":\"CountUpDown not set, unable to adjust.\"}"); // Conflict
       return;
     }
@@ -1092,24 +1125,27 @@ void setupWebServer() {
     if (rtcEnabled) {
       dtNow = rtc.now();
     } else {
-      time_t nowTime = time(nullptr);
-      struct tm timeInfo;
-      localtime_r(&nowTime, &timeInfo);
-      dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+      dtNow = DateTime(time(nullptr));
     }
     int seconds = request->getParam("seconds", true)->value().toInt();
-    if (countupdownTargetTimestamp < dtNow.unixtime()) { // Count Up!
+    if (countupdownTimestamp < dtNow.unixtime()) { // Count Up!
       seconds = seconds * -1; // needs to be closer to today if in countup
     }
-    countupdownTargetTimestamp -= seconds;
+    countupdownTimestamp -= seconds;
     String msg = saveConfig();
     if (msg.length() > 0) {
       request->send(500, "application/json", msg);
       return;
     }
-    char okMsg[128];
-    snprintf(okMsg, sizeof(okMsg), "{\"countupdownTimeStamp\":\"%lld\"}", countupdownTargetTimestamp);
-    request->send(200, "application/json", okMsg);
+    JsonDocument okDoc;
+    okDoc[F("brightness")] = brightness;
+    okDoc[F("flipDisplay")] = flipDisplay;
+    okDoc[F("twelveHour")] = twelveHour;
+    okDoc[F("lockCountUpDown")] = lockCountUpDown;
+    okDoc[F("countupdownTimestamp")] = countupdownTimestamp;
+    String response;
+    serializeJson(okDoc, response);
+    request->send(200, "application/json", response);
   });
 
   server.on("/get_time", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1120,13 +1156,14 @@ void setupWebServer() {
     if (rtcEnabled) {
       dtNow = rtc.now();
     } else {
-      time_t nowTime = time(nullptr);
-      struct tm timeInfo;
-      localtime_r(&nowTime, &timeInfo);
-      dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+      dtNow = DateTime(time(nullptr));
     }
+    // Convert from UTC to Local
+    time_t nowTime = dtNow.unixtime();
+    struct tm timeInfo;
+    localtime_r(&nowTime, &timeInfo);
     char dateTimeJson[48];
-    snprintf(dateTimeJson, sizeof(dateTimeJson), "{\"time\":\"%04d-%02d-%02d %02d:%02d:%02d\"}", dtNow.year(), dtNow.month(), dtNow.day(), dtNow.hour(), dtNow.minute(), dtNow.second());
+    snprintf(dateTimeJson, sizeof(dateTimeJson), "{\"time\":\"%04u-%02u-%02u %02u:%02u:%02u\"}", timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
     request->send(200, "application/json", dateTimeJson);
   });
 
@@ -1134,6 +1171,7 @@ void setupWebServer() {
 #if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /set_time"));
 #endif
+    Serial.println(request->params());
     if (!request->hasParam("DateTime", true)) {
       request->send(400, "application/json", "{\"error\":\"Missing value\"}");
       return;
@@ -1160,11 +1198,10 @@ void setupWebServer() {
       if (newTime != (time_t)-1) {
         struct timeval newNow = {.tv_sec = newTime };
         settimeofday(&newNow, NULL);
-        setTimeZone(timeZone);
-        time_t nowTime = time(nullptr);
-        struct tm timeInfo;
-        localtime_r(&nowTime, &timeInfo);
         if (rtcEnabled) {
+          time_t nowTime = time(nullptr);
+          struct tm timeInfo;
+          gmtime_r(&nowTime, &timeInfo);
           rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
         }
       }
@@ -1173,13 +1210,14 @@ void setupWebServer() {
     if (rtcEnabled) {
       dtNow = rtc.now();
     } else {
-      time_t nowTime = time(nullptr);
-      struct tm timeInfo;
-      localtime_r(&nowTime, &timeInfo);
-      dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+      dtNow = DateTime(time(nullptr));
     }
+    // Convert from UTC to Local
+    time_t nowTime = dtNow.unixtime();
+    struct tm timeInfo;
+    localtime_r(&nowTime, &timeInfo);
     char dateTimeJson[48];
-    snprintf(dateTimeJson, sizeof(dateTimeJson), "{\"time\":\"%04u-%02u-%02u %02u:%02u:%02u\"}", dtNow.year(), dtNow.month(), dtNow.day(), dtNow.hour(), dtNow.minute(), dtNow.second());
+    snprintf(dateTimeJson, sizeof(dateTimeJson), "{\"time\":\"%04u-%02u-%02u %02u:%02u:%02u\"}", timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
     request->send(200, "application/json", dateTimeJson);
   });
 
@@ -1349,8 +1387,9 @@ void loop() {
               #if DEBUG==true
               Serial.println(F("[TIME] Adjusting RTC clock."));
               #endif
+              time_t nowTime = rtc.now().unixtime();
               struct tm timeInfo;
-              getLocalTime(&timeInfo);
+              gmtime_r(&nowTime, &timeInfo);
               rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
             }
           } else if (curMillis - ntpLastTime > ntpTimeout && ntpRetryCount < maxNtpRetries) {
@@ -1381,18 +1420,15 @@ void loop() {
 
   // Create DateTime object and set it via RTC or via (maybe) ntp synced clock.
   DateTime dtNow;
-  if (rtcEnabled) {
+  if (rtcEnabled) { // RTC will store UTC time.
     dtNow = rtc.now();
   } else {
-    time_t nowTime = time(nullptr);
-    struct tm timeInfo;
-    localtime_r(&nowTime, &timeInfo);
-    dtNow = DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec);
+    dtNow = DateTime(time(nullptr));
   }
   char timeWithSeconds[24];
   // --- COUNTUPDOWN Display Mode ---
-  if (countupdownTargetTimestamp > 0) {
-    long timeSeconds = countupdownTargetTimestamp - dtNow.unixtime();
+  if (countupdownTimestamp > 0) {
+    long timeSeconds = countupdownTimestamp - dtNow.unixtime();
     if (timeSeconds < 0) {
       timeSeconds = timeSeconds * -1;
     }
@@ -1421,11 +1457,15 @@ void loop() {
   }  // End COUNTUPDOWN Display Mode
   // --- CLOCK Display Mode ---
   else {
+    // Convert UTC to local.
+    struct tm tm;
+    time_t utcStamp = dtNow.unixtime();
+    localtime_r(&utcStamp, &tm);
     if (twelveHour) {
-      uint8_t hour = dtNow.hour() % 12;
-      snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%d:%02d:%02d", hour == 0 ? 12 : hour, dtNow.minute(), dtNow.second());
+      uint8_t hour = tm.tm_hour % 12;
+      snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%d:%02d:%02d", hour == 0 ? 12 : hour, tm.tm_min, tm.tm_sec);
     } else {
-      snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%02d:%02d:%02d", dtNow.hour(), dtNow.minute(), dtNow.second());
+      snprintf(timeWithSeconds, sizeof(timeWithSeconds), "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
     }
   } // End CLOCK Display Mode
   P.setTextAlignment(PA_CENTER);
