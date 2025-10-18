@@ -528,6 +528,13 @@ void setupWebServer() {
     request->send(LittleFS, "/index.html", "text/html");
   });
 
+  server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /"));
+#endif
+    request->send(LittleFS, "/favicon.ico", "image/x-icon");
+  });
+
   server.on("/config.json", HTTP_GET, [](AsyncWebServerRequest *request) {
 #if DEBUG==true
     Serial.println(F("[WEBSERVER] Request: /config.json"));
@@ -1286,7 +1293,6 @@ void setup() {
 #endif
 
   P.begin();  // Initialize Parola library
-
   P.setCharSpacing(1);
   P.setFont(mFactory);
   loadConfig();  // This function now has internal yields and prints
@@ -1302,6 +1308,7 @@ void setup() {
   setupWebServer();
   startMDNS();
   startElegantOTA();
+  setTimeZone(timeZone);
 #if DEBUG==true
   Serial.println(F("[SETUP] Setup complete"));
 #endif
