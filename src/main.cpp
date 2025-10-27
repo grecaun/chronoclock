@@ -46,6 +46,7 @@ const char *getSafePassword(int ix);
 void connectWiFi();
 void wifiGotIP();
 void wifiDisconnected();
+void wifiScanFinished(int numNetworks);
 void startAPMode();
 void startMDNS();
 void startElegantOTA();
@@ -54,7 +55,7 @@ void WiFiStationGotIP(WiFiEvent_t event, WiFiEventInfo_t info);
 void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info);
 #endif
 #if ESPVERS == 8266
-WiFiEventHandler WiFiStationGotIP, WiFiStationDisconnected;
+WiFiEventHandler WiFiStationGotIP, WiFiStationDisconnected, WiFiScanFinished;
 #endif
 // --- Time ---
 void startNTPSync(bool resetTime, int retryCount);
@@ -72,6 +73,8 @@ const uint32_t wifiTimeout = 10000;  // 10 second timeout
 const uint32_t apTimeout   = 300000; // 5 minutes
 enum ChronoWiFiState {
   WIFI_CONNECTED,
+  WIFI_SCANNING,
+  WIFI_SCAN_FINISHED,
   WIFI_WORKING,
   WIFI_DISCONNECTED,
   WIFI_APMODE
@@ -325,12 +328,14 @@ void connectWiFi() {
   WiFi.disconnect(true);
   dnsServer.stop();
   wifiLastTime = millis();
-  wifiState = WIFI_WORKING;
+  wifiState = WIFI_SCANNING;
   delay(100);
   
 #if ESPVERS == 32
   WiFi.onEvent(WiFiStationGotIP, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
   WiFi.onEvent(WiFiStationDisconnected, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+  WiFi.onEvent(WiFiScanFinished, WiFiEvent_t::ARDUINO_EVENT_WIFI_SCAN_DONE);
+  WiFi.scanNetworks(true);
 #endif
 #if ESPVERS == 8266
   WiFiStationGotIP = WiFi.onStationModeGotIP([](const WiFiEventStationModeGotIP& event) {
@@ -340,8 +345,10 @@ void connectWiFi() {
   WiFiStationDisconnected = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& event) {
     wifiDisconnected();
   });
+  WiFi.scanNetworksAsync(wifiScanFinished);
 #endif
 
+  wifiNetNum = 0; /*
   for (int i=0;i<10;i++) {
     wifiNetNum = i;
     if (strlen(ssids[i]) > 0) {
@@ -354,7 +361,7 @@ void connectWiFi() {
       return;
     }
   }
-  wifiNetNum++;
+  wifiNetNum++; //*/
 }
 
 void wifiGotIP() {
@@ -379,6 +386,14 @@ void wifiDisconnected() {
 #endif
   wifiLastTime = millis();
   wifiState = WIFI_DISCONNECTED;
+}
+
+void wifiScanFinished(int numNetworks) {
+#if DEBUG==true
+  Serial.println(F("[WIFI] Network scan has finished."));
+#endif
+  wifiLastTime = millis();
+  wifiState = WIFI_SCAN_FINISHED;
 }
 
 void startAPMode() {
@@ -419,9 +434,14 @@ void startMDNS() {
   Serial.println(F("[WIFI] Starting mDNS responder."));
 #endif
   MDNS.end();
-  MDNS.begin(mdns);
 #if DEBUG==true
-  Serial.println(F("[WIFI] mDNS responder started."));
+  if (!MDNS.begin(mdns)) {
+    Serial.println(F("[WIFI] mDNS responder did not start."));
+  } else {
+    Serial.println(F("[WIFI] mDNS responder started."));
+  }
+#else
+  MDNS.begin(mdns);
 #endif
 }
 
@@ -440,6 +460,10 @@ void WiFiStationGotIP(WiFiEvent_t event, WiFiEventInfo_t info) {
 
 void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info) {
   wifiDisconnected();
+}
+
+void WiFiScanFinished(WiFiEvent_t event, WiFiEventInfo_t info) {
+  wifiScanFinished(0);
 }
 #endif
 
@@ -530,9 +554,16 @@ void setupWebServer() {
 
   server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *request) {
 #if DEBUG==true
-    Serial.println(F("[WEBSERVER] Request: /"));
+    Serial.println(F("[WEBSERVER] Request: /favicon.ico"));
 #endif
     request->send(LittleFS, "/favicon.ico", "image/x-icon");
+  });
+
+  server.on("/health", HTTP_GET, [](AsyncWebServerRequest *request) {
+#if DEBUG==true
+    Serial.println(F("[WEBSERVER] Request: /health"));
+#endif
+    request->send(204);
   });
 
   server.on("/config.json", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -1321,29 +1352,60 @@ void loop() {
   // --- WiFi Connection State Machine ---
   switch (wifiState) {
     // Attempting to connect still.
+    case WIFI_SCAN_FINISHED:
+      wifiNetNum = 0;
+      wifiState = WIFI_WORKING;
+      goto try_connect;
     case WIFI_WORKING:
       // Check timeout
       if (curMillis >= wifiLastTime + wifiTimeout) {
-        // try to connect to next -- wifiNetNum is always the index of the SSID/Password for
-        // the network that timed out
-        for (int i=wifiNetNum+1; i<10; i++) {
-          wifiNetNum = i;
-          if (strlen(ssids[i]) > 0) {
+try_connect:
+        // try to connect to next -- wifiNetNum is always the index of the SSID/Password to try next
+        int16_t numScanned = WiFi.scanComplete();
+        String ssid;
+        int32_t rssi;
+        uint8_t encryptionType;
+        uint8_t *bssid;
+        int32_t channel;
+        bool hidden;
+        if (numScanned > 0) {
+          for (int i=wifiNetNum; i<10; i++) { // Inner Loop Start
+            wifiNetNum = i+1;
+            if (strlen(ssids[i])) {
 #if DEBUG==true
-          Serial.print(F("[WIFI] Attempting to connect to "));
-          Serial.println(ssids[i]);
+              Serial.print(F("[WIFI] Checking to see if network was visible: "));
+              Serial.println(ssids[i]);
 #endif
-            WiFi.begin(ssids[i],passwords[i]);
-            wifiLastTime = millis();
-            break;
-          }
+              for (int n=0; n<numScanned; n++) { // Outer Loop Start
+#if ESPVERS == 32
+                WiFi.getNetworkInfo(n, ssid, encryptionType, rssi, bssid, channel);
+#endif
+#if ESPVERS == 8266
+                WiFi.getNetworkInfo(n, ssid, encryptionType, rssi, bssid, channel, hidden);
+#endif
+#if DEBUG==true
+                Serial.print(F("[WIFI] Scanned WiFi network: "));
+                Serial.println(ssid);
+#endif
+                if (strcmp(ssids[i], ssid.c_str()) == 0) {
+#if DEBUG==true
+              Serial.println(F("[WIFI] Network found. Attempting to connect."));
+#endif
+                  WiFi.disconnect(true);
+                  WiFi.begin(ssids[i],passwords[i]);
+                  wifiLastTime = millis();
+                  goto outer_break;
+                }
+              } // Inner Loop End
+            }
+          } // Outer Loop End
+        } else {
+            wifiNetNum = 11;
         }
-        // wifiNetNum could be 9 (loop executed at least once) or 
-        // 10 (9 was the network that timed out) before the increment
-        wifiNetNum++;
       }
+outer_break:
       // Only reachable if no networks specified or they all timed out
-      if (wifiNetNum >= 10) {
+      if (wifiNetNum > 10) {
         startAPMode();
       }
       break;
