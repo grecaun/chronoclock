@@ -97,6 +97,11 @@ bool twelveHour        = false;
 bool lockCountUpDown   = false;
 char ntpServer1[128]   = "pool.ntp.org";
 char ntpServer2[128]   = "time.nist.gov";
+int  logIndex          = 0;
+char log[10][24]       = {"","","","","","","","","",""};
+int  lastLogTime       = 0;
+uint32_t startMillis   = 0;
+uint32_t runtime       = 0;
 
 // Globals
 bool          rtcEnabled           = false;
@@ -147,6 +152,7 @@ void loadConfig() {
     doc[F("ntpServer1")] = ntpServer1;
     doc[F("ntpServer2")] = ntpServer2;
     doc[F("countupdownTimestamp")] = 0;
+    JsonArray log = doc.createNestedArray("log");
 
     JsonArray ssidArray = doc[F("ssids")].to<JsonArray>();
     JsonArray pwdArray = doc[F("passwords")].to<JsonArray>();
@@ -210,6 +216,11 @@ void loadConfig() {
   strlcpy(ntpServer1, doc[F("ntpServer1")] | "pool.ntp.org", sizeof(ntpServer1));
   strlcpy(ntpServer2, doc[F("ntpServer2")] | "time.nist.gov", sizeof(ntpServer2));
   countupdownTimestamp = doc[F("countupdownTimestamp")] | 0;
+  JsonArray tmplog = doc[F("log")];
+  logIndex = tmplog.size() % 10;
+  for (int i=0; i<10; i++) {
+    strlcpy(log[i], tmplog[i] | "", sizeof(log[i]));
+  }
 #if DEBUG==true
   Serial.println(F("[CONFIG] Configuration loaded."));
 #endif
@@ -234,6 +245,12 @@ String saveConfig() {
     for (int i=0;i<10;i++) {
       ssidArray[i] = ssids[i];
       pwdArray[i] = passwords[i];
+    }
+    
+    snprintf(log[logIndex], sizeof(log[logIndex]), "%lld:%02lld:%02lld", runtime / 3600000, runtime % 3600000 / 60000, runtime % 60000 / 1000);
+    JsonArray logArray = doc[F("log")].to<JsonArray>();
+    for (int i=0;i<logIndex;i++) {
+      logArray[i] = log[i];
     }
 
     if (LittleFS.exists("/config.json")) {
@@ -1285,6 +1302,7 @@ void setupWebServer() {
 void setup() {
   Serial.begin(115200);
   delay(500);
+  startMillis = millis();
 #if DEBUG==true
   Serial.println(F("[SETUP] Starting setup..."));
 #endif
@@ -1349,6 +1367,11 @@ void setup() {
 
 void loop() {
   uint32_t curMillis = millis();
+  runtime = curMillis - startMillis;
+  if (runtime / 300000 > lastLogTime) {
+    lastLogTime = runtime / 300000;
+    saveConfig();
+  }
   // --- WiFi Connection State Machine ---
   switch (wifiState) {
     // Attempting to connect still.
