@@ -53,6 +53,7 @@ void startElegantOTA();
 #if ESPVERS == 32
 void WiFiStationGotIP(WiFiEvent_t event, WiFiEventInfo_t info);
 void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info);
+void WiFiScanFinished(WiFiEvent_t event, WiFiEventInfo_t info);
 #endif
 #if ESPVERS == 8266
 WiFiEventHandler WiFiStationGotIP, WiFiStationDisconnected, WiFiScanFinished;
@@ -97,8 +98,8 @@ bool twelveHour        = false;
 bool lockCountUpDown   = false;
 char ntpServer1[128]   = "pool.ntp.org";
 char ntpServer2[128]   = "time.nist.gov";
-int  logIndex          = 0;
-char log[10][24]       = {"","","","","","","","","",""};
+int  logIndex          = 9;
+char logAct[10][24]    = {"","","","","","","","","",""};
 int  lastLogTime       = 0;
 uint32_t startMillis   = 0;
 uint32_t runtime       = 0;
@@ -152,7 +153,7 @@ void loadConfig() {
     doc[F("ntpServer1")] = ntpServer1;
     doc[F("ntpServer2")] = ntpServer2;
     doc[F("countupdownTimestamp")] = 0;
-    JsonArray log = doc.createNestedArray("log");
+    JsonArray log = doc[F("log")].to<JsonArray>();
 
     JsonArray ssidArray = doc[F("ssids")].to<JsonArray>();
     JsonArray pwdArray = doc[F("passwords")].to<JsonArray>();
@@ -217,9 +218,10 @@ void loadConfig() {
   strlcpy(ntpServer2, doc[F("ntpServer2")] | "time.nist.gov", sizeof(ntpServer2));
   countupdownTimestamp = doc[F("countupdownTimestamp")] | 0;
   JsonArray tmplog = doc[F("log")];
-  logIndex = tmplog.size() % 10;
+  logIndex = doc[F("logIndex")] | 0;
+  logIndex = (logIndex + 1) % 10;
   for (int i=0; i<10; i++) {
-    strlcpy(log[i], tmplog[i] | "", sizeof(log[i]));
+    strlcpy(logAct[i], tmplog[i] | "", sizeof(logAct[i]));
   }
 #if DEBUG==true
   Serial.println(F("[CONFIG] Configuration loaded."));
@@ -239,6 +241,7 @@ String saveConfig() {
     doc[F("ntpServer1")] = ntpServer1;
     doc[F("ntpServer2")] = ntpServer2;
     doc[F("countupdownTimestamp")] = countupdownTimestamp;
+    doc[F("logIndex")] = logIndex;
 
     JsonArray ssidArray = doc[F("ssids")].to<JsonArray>();
     JsonArray pwdArray = doc[F("passwords")].to<JsonArray>();
@@ -247,10 +250,10 @@ String saveConfig() {
       pwdArray[i] = passwords[i];
     }
     
-    snprintf(log[logIndex], sizeof(log[logIndex]), "%lld:%02lld:%02lld", runtime / 3600000, runtime % 3600000 / 60000, runtime % 60000 / 1000);
+    snprintf(logAct[logIndex], sizeof(logAct[logIndex]), "%lld:%02lld:%02lld", runtime / 3600000, runtime % 3600000 / 60000, runtime % 60000 / 1000);
     JsonArray logArray = doc[F("log")].to<JsonArray>();
     for (int i=0;i<logIndex;i++) {
-      logArray[i] = log[i];
+      logArray[i] = logAct[i];
     }
 
     if (LittleFS.exists("/config.json")) {
