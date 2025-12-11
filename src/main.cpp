@@ -976,7 +976,9 @@ void setupWebServer() {
     Serial.println(F("[WEBSERVER] Request: /restart"));
 #endif
     request->send(200, "application/json", "{\"ok\":true}");
-    ESP.restart();
+    request->onDisconnect([](){
+      ESP.restart();
+    });
   });
 
   server.on("/set_lock", HTTP_POST, [](AsyncWebServerRequest *request) {

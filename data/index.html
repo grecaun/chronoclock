@@ -758,20 +758,6 @@ window.onload = function () {
       console.error('Failed to load config:', err);
       showSavingModal("");
       updateSavingModal("⚠️ Failed to load configuration.", false);
-
-      // Show appropriate button for load error
-      removeReloadButton();
-      removeRestoreButton();
-      const errorMsg = (err.message || "").toLowerCase();
-      if (
-        errorMsg.includes("config corrupted") ||
-        errorMsg.includes("failed to write config") ||
-        errorMsg.includes("restore")
-      ) {
-        ensureRestoreButton();
-      } else {
-        ensureReloadButton();
-      }
     });
   document.querySelector('html').style.height = 'unset';       
   document.body.classList.add('loaded');     
@@ -821,8 +807,6 @@ async function submitConfig(event) {
   })
   .then(json => {
     isSaving = false;
-    removeReloadButton();
-    removeRestoreButton();
     if (isAPMode) {
       updateSavingModal("✅ Settings saved successfully!<br><br>Device will connect to a specified network.", false);
       setTimeout(() => {
@@ -849,8 +833,6 @@ async function submitConfig(event) {
         document.getElementById('configForm').style.display = 'none'; 
         updateSavingModal("✅ All done!<br>You can now close this tab safely.", false);
       }, 3000);
-      removeReloadButton();
-      removeRestoreButton();
       return;
     }
     console.error('Save error:', err);
@@ -859,19 +841,6 @@ async function submitConfig(event) {
       friendlyMessage = "⚠️ Cannot connect to the device.<br>Is it powered on and connected?";
     }
     updateSavingModal(`${friendlyMessage}<br><br>Details: ${err.message}`, false);
-    // Show only one action button, based on error content
-    removeReloadButton();
-    removeRestoreButton();
-    const errorMsg = (err.message || "").toLowerCase();
-    if (
-      errorMsg.includes("config corrupted") ||
-      errorMsg.includes("failed to write config") ||
-      errorMsg.includes("restore")
-    ) {
-      ensureRestoreButton();
-    } else {
-      ensureReloadButton();
-    }
   });
 }
 
@@ -899,63 +868,10 @@ function updateSavingModal(message, showSpinner = false) {
   let modalText = document.getElementById('savingModalText');
   modalText.innerHTML = message;
   document.querySelector('#savingModal .spinner').style.display = showSpinner ? 'block' : 'none';
-
-  // Remove reload/restore buttons if no longer needed
-  if (message.includes("saved successfully") || message.includes("Backup restored") || message.includes("All done!")) {
-    removeReloadButton();
-    removeRestoreButton();
-  }
-}
-
-function ensureReloadButton(options = {}) {
-  let modalContent = document.getElementById('savingModalContent');
-  if (!modalContent) return;
-  let btn = document.getElementById('reloadButton');
-  if (!btn) {
-    btn = document.createElement('button');
-    btn.id = 'reloadButton';
-    btn.className = 'primary-button';
-    btn.style.display = 'inline-block';
-    btn.style.margin = '1rem 0.5rem 0 0';
-    modalContent.appendChild(btn);
-  }
-  btn.textContent = options.text || "Reload Page";
-  btn.onclick = options.onClick || (() => location.reload());
-  btn.style.display = 'inline-block';
-  return btn;
-}
-
-function ensureRestoreButton(options = {}) {
-  let modalContent = document.getElementById('savingModalContent');
-  if (!modalContent) return;
-  let btn = document.getElementById('restoreButton');
-  if (!btn) {
-    btn = document.createElement('button');
-    btn.id = 'restoreButton';
-    btn.className = 'primary-button';
-    btn.style.display = 'inline-block';
-    btn.style.margin = '1rem 0 0 0.5rem';
-    modalContent.appendChild(btn);
-  }
-  btn.textContent = options.text || "Restore Backup";
-  btn.onclick = options.onClick || restoreBackupConfig;
-  btn.style.display = 'inline-block';
-  return btn;
-}
-
-function removeReloadButton() {
-  let btn = document.getElementById('reloadButton');
-  if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
-}
-function removeRestoreButton() {
-  let btn = document.getElementById('restoreButton');
-  if (btn && btn.parentNode) btn.parentNode.removeChild(btn);
 }
 
 function restoreBackupConfig() {
   showSavingModal("Restoring backup...");
-  removeReloadButton();
-  removeRestoreButton();
 
   fetch('/restore', { method: 'POST' })
     .then(response => {
@@ -971,11 +887,6 @@ function restoreBackupConfig() {
     .catch(err => {
       console.error("Restore error:", err);
       updateSavingModal(`❌ Failed to restore backup: ${err.message}`, false);
-
-      // Show only one button, for backup restore failures show reload.
-      removeReloadButton();
-      removeRestoreButton();
-      ensureReloadButton();
     });
 }
 
@@ -1073,22 +984,16 @@ function sendAddSeconds(val) {
       } else {
         updateSavingModal("⚠️ Count up/down not set.", false)
       }
-      removeReloadButton();
-      removeRestoreButton();
       setTimeout(hideSavingModal, 1000);
       return;
     } else {
       updateCountUpDownBoxes(json.countupdownTimestamp);
     }
-    removeReloadButton();
-    removeRestoreButton();
     updateSavingModal("✅ All done!<br>Count Up/Down should have been adjusted.", false)
     setTimeout(hideSavingModal, 1000);
     return;
   })
   .catch(err => {
-    removeReloadButton();
-    removeRestoreButton();
     updateSavingModal(`⚠️ Something went wrong trying to adjust the Count Up/Down.<br><br>${err.message}`, false)
     setTimeout(hideSavingModal, 2000);
     return;
@@ -1117,22 +1022,16 @@ function sendRemoveSeconds(val) {
       } else {
         updateSavingModal("⚠️ Count up/down not set.", false)
       }
-      removeReloadButton();
-      removeRestoreButton();
       setTimeout(hideSavingModal, 1000);
       return;
     } else {
       updateCountUpDownBoxes(json.countupdownTimestamp);
     }
-    removeReloadButton();
-    removeRestoreButton();
     updateSavingModal("✅ All done!<br>Count Up/Down should have been adjusted.", false)
     setTimeout(hideSavingModal, 1000);
     return;
   })
   .catch(err => {
-    removeReloadButton();
-    removeRestoreButton();
     updateSavingModal(`⚠️ Something went wrong trying to adjust the Count Up/Down.<br><br>${err.message}`, false)
     setTimeout(hideSavingModal, 2000);
     return;
@@ -1159,22 +1058,16 @@ function sendStopCountUpDown() {
       } else {
         updateSavingModal("⚠️ Count up/down not set.", false)
       }
-      removeReloadButton();
-      removeRestoreButton();
       setTimeout(hideSavingModal, 1000);
       return;
     } else {
       updateCountUpDownBoxes(json.countupdownTimestamp);
     }
-    removeReloadButton();
-    removeRestoreButton();
     updateSavingModal("✅ All done!<br>Count Up/Down should have stopped.", false)
     setTimeout(hideSavingModal, 2000);
     return;
   })
   .catch(err => {
-    removeReloadButton();
-    removeRestoreButton();
     updateSavingModal(`⚠️ Something went wrong trying to stop the Count Up/Down.<br><br>${err.message}`, false)
     setTimeout(hideSavingModal, 2000);
     return;
@@ -1201,23 +1094,17 @@ function sendStartCountUpDown() {
       } else {
         updateSavingModal("⚠️ Count up/down already started.", false)
       }
-      removeReloadButton();
-      removeRestoreButton();
       setTimeout(hideSavingModal, 1000);
       return;
     } else {
       updateCountUpDownBoxes(json.countupdownTimestamp);
     }
     updateSavingModal("✅ All done!<br>Count Up should have started.", false)
-    removeReloadButton();
-    removeRestoreButton();
     setTimeout(hideSavingModal, 2000);
     return;
   })
   .catch(err => {
       updateSavingModal(`⚠️ Something went wrong trying to start the Count Up.<br><br>${err.message}`, false)
-      removeReloadButton();
-      removeRestoreButton();
       setTimeout(hideSavingModal, 2000);
       return;
   });
@@ -1231,21 +1118,15 @@ function syncNTP() {
     showSavingModal("");
     if (!response.ok) {
       updateSavingModal("⚠️ Something went wrong trying to synchronize the time.", false)
-      removeReloadButton();
-      removeRestoreButton();
       setTimeout(hideSavingModal, 2000);
       return;
     }
     updateSavingModal("✅ All done!<br>Time will be synchronized with NTP servers.", false)
-    removeReloadButton();
-    removeRestoreButton();
     setTimeout(hideSavingModal, 2000);
     return;
   })
   .catch(err => {
       updateSavingModal(`⚠️ Something went wrong trying to synchronize the time.<br><br>${err.message}`, false)
-      removeReloadButton();
-      removeRestoreButton();
       setTimeout(hideSavingModal, 2000);
       return;
   });
@@ -1259,21 +1140,15 @@ function sendRestart() {
     showSavingModal("");
     if (!response.ok) {
       updateSavingModal("⚠️ Something went wrong trying to restart the device.", false)
-      removeReloadButton();
-      removeRestoreButton();
       setTimeout(hideSavingModal, 2000);
       return;
     }
     updateSavingModal("✅ All done!<br>Device is restarting.", false)
-    removeReloadButton();
-    removeRestoreButton();
     setTimeout(hideSavingModal, 2000);
     return;
   })
   .catch(err => {
       updateSavingModal(`⚠️ Something went wrong trying to restart the device.<br><br>${err.message}`, false)
-      removeReloadButton();
-      removeRestoreButton();
       setTimeout(hideSavingModal, 2000);
       return;
   });
