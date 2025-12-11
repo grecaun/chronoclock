@@ -1483,18 +1483,18 @@ outer_break:
             ntpState = NTP_SUCCESS;
             setTimeZone(timeZone);
             if (rtcEnabled) {
-              #if DEBUG==true
+  #if DEBUG==true
               Serial.println(F("[TIME] Adjusting RTC clock."));
-              #endif
-              time_t nowTime = rtc.now().unixtime();
+  #endif
+              time_t nowTime = time(nullptr);
               struct tm timeInfo;
               gmtime_r(&nowTime, &timeInfo);
               rtc.adjust(DateTime(timeInfo.tm_year + 1900, timeInfo.tm_mon + 1, timeInfo.tm_mday, timeInfo.tm_hour, timeInfo.tm_min, timeInfo.tm_sec));
             }
           } else if (curMillis - ntpLastTime > ntpTimeout && ntpRetryCount < maxNtpRetries) {
-            #if DEBUG==true
+  #if DEBUG==true
             Serial.println(F("[TIME] NTP sync failed."));
-            #endif
+  #endif
             ntpState = NTP_FAILED;
           } else if (ntpRetryCount >= maxNtpRetries) {
             ntpState = NTP_IDLE;
