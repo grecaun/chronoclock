@@ -100,7 +100,7 @@ char ntpServer1[128]   = "pool.ntp.org";
 char ntpServer2[128]   = "time.nist.gov";
 int  logIndex          = 9;
 char logAct[10][24]    = {"","","","","","","","","",""};
-int  lastLogTime       = 0;
+uint32_t lastLogTime   = 0;
 uint32_t startMillis   = 0;
 uint32_t runtime       = 0;
 
@@ -153,6 +153,7 @@ void loadConfig() {
     doc[F("ntpServer1")] = ntpServer1;
     doc[F("ntpServer2")] = ntpServer2;
     doc[F("countupdownTimestamp")] = 0;
+    doc[F("logIndex")] = logIndex;
     JsonArray log = doc[F("log")].to<JsonArray>();
 
     JsonArray ssidArray = doc[F("ssids")].to<JsonArray>();
@@ -160,6 +161,7 @@ void loadConfig() {
     for (int i=0;i<10;i++) {
       ssidArray[i] = ssids[i];
       pwdArray[i] = passwords[i];
+      log[i] = logAct[i];
     }
 
     File f = LittleFS.open("/config.json", "w");
@@ -202,9 +204,11 @@ void loadConfig() {
 
   JsonArray ssidArray = doc[F("ssids")];
   JsonArray pwdArray = doc[F("passwords")];
+  JsonArray tmplog = doc[F("log")].to<JsonArray>();
   for (int i=0; i<10; i++) {
     strlcpy(ssids[i], ssidArray[i] | "", sizeof(ssids[i]));
     strlcpy(passwords[i], pwdArray[i] | "", sizeof(passwords[i]));
+    strlcpy(logAct[i], tmplog[i] | "", sizeof(logAct[i]));
   }
   strlcpy(mdns, doc[F("mdns")] | "chronoclock", sizeof(mdns));
   strlcpy(apSsid, doc[F("apSsid")] | "", sizeof(apSsid));
@@ -217,12 +221,8 @@ void loadConfig() {
   strlcpy(ntpServer1, doc[F("ntpServer1")] | "pool.ntp.org", sizeof(ntpServer1));
   strlcpy(ntpServer2, doc[F("ntpServer2")] | "time.nist.gov", sizeof(ntpServer2));
   countupdownTimestamp = doc[F("countupdownTimestamp")] | 0;
-  JsonArray tmplog = doc[F("log")];
   logIndex = doc[F("logIndex")] | 0;
   logIndex = (logIndex + 1) % 10;
-  for (int i=0; i<10; i++) {
-    strlcpy(logAct[i], tmplog[i] | "", sizeof(logAct[i]));
-  }
 #if DEBUG==true
   Serial.println(F("[CONFIG] Configuration loaded."));
 #endif
@@ -243,19 +243,22 @@ String saveConfig() {
     doc[F("countupdownTimestamp")] = countupdownTimestamp;
     doc[F("logIndex")] = logIndex;
 
+    
+    snprintf(logAct[logIndex], sizeof(logAct[logIndex]), "%d:%02d:%02d", runtime / 3600000, runtime % 3600000 / 60000, runtime % 60000 / 1000);
+    Serial.print(F("New log data for index "));
+    Serial.print(logIndex);
+    Serial.print(F(": "));
+    Serial.println(logAct[logIndex]);
+
     JsonArray ssidArray = doc[F("ssids")].to<JsonArray>();
     JsonArray pwdArray = doc[F("passwords")].to<JsonArray>();
+    JsonArray logArray = doc[F("log")].to<JsonArray>();
     for (int i=0;i<10;i++) {
       ssidArray[i] = ssids[i];
       pwdArray[i] = passwords[i];
-    }
-    
-    snprintf(logAct[logIndex], sizeof(logAct[logIndex]), "%lld:%02lld:%02lld", runtime / 3600000, runtime % 3600000 / 60000, runtime % 60000 / 1000);
-    JsonArray logArray = doc[F("log")].to<JsonArray>();
-    for (int i=0;i<logIndex;i++) {
       logArray[i] = logAct[i];
     }
-
+    
     if (LittleFS.exists("/config.json")) {
 #if DEBUG==true
       Serial.println(F("[SAVE] Renaming /config.json to /config.bak"));
@@ -552,6 +555,14 @@ void printConfigToSerial() {
   Serial.println(ntpServer2);
   Serial.print(F("TimeZone (IANA): "));
   Serial.println(timeZone);
+  Serial.print(F("LogIndex: "));
+  Serial.println(logIndex);
+  for (int i=0;i<10;i++) {
+    Serial.print(F("Log "));
+    Serial.print(i);
+    Serial.print(F(": "));
+    Serial.println(logAct[i]);
+  }
   Serial.println(F("========================================"));
   Serial.println();
 #endif
